@@ -201,6 +201,11 @@ abstract class RouteMatchBase with Diagnosticable {
     required GlobalKey<NavigatorState> scopedNavigatorKey,
     required Uri uri,
   }) {
+    // Fix: Return empty when uri.path is empty to prevent assertion error
+    if (uri.path.isEmpty) {
+      return _empty;
+    }
+    
     final GlobalKey<NavigatorState>? parentKey =
         route.parentNavigatorKey == scopedNavigatorKey
         ? null
