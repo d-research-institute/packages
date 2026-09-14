@@ -15,8 +15,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class FVPPlatformVideoViewCreationParams;
 @class FVPCreationOptions;
-@class FVPTexturePlayerIds;
 @class FVPNowPlayingMetadata;
+@class FVPTexturePlayerIds;
 
 /// Information passed to the platform view creation.
 @interface FVPPlatformVideoViewCreationParams : NSObject
@@ -35,16 +35,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSDictionary<NSString *, NSString *> *httpHeaders;
 @end
 
-@interface FVPTexturePlayerIds : NSObject
-/// `init` unavailable to enforce nonnull fields, see the `make` class method.
-- (instancetype)init NS_UNAVAILABLE;
-+ (instancetype)makeWithPlayerId:(NSInteger)playerId textureId:(NSInteger)textureId;
-@property(nonatomic, assign) NSInteger playerId;
-@property(nonatomic, assign) NSInteger textureId;
-@end
-
 /// Metadata for Now Playing Info (lock screen / control center).
 @interface FVPNowPlayingMetadata : NSObject
+/// `init` unavailable to enforce nonnull fields, see the `make` class method.
+- (instancetype)init NS_UNAVAILABLE;
 + (instancetype)makeWithTitle:(nullable NSString *)title
                        artist:(nullable NSString *)artist
                         album:(nullable NSString *)album
@@ -55,6 +49,14 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) NSString *album;
 @property(nonatomic, copy, nullable) NSString *artworkUrl;
 @property(nonatomic, assign) BOOL isLiveStream;
+@end
+
+@interface FVPTexturePlayerIds : NSObject
+/// `init` unavailable to enforce nonnull fields, see the `make` class method.
+- (instancetype)init NS_UNAVAILABLE;
++ (instancetype)makeWithPlayerId:(NSInteger)playerId textureId:(NSInteger)textureId;
+@property(nonatomic, assign) NSInteger playerId;
+@property(nonatomic, assign) NSInteger textureId;
 @end
 
 /// The codec used by all APIs.
@@ -100,6 +102,26 @@ extern void SetUpFVPAVFoundationVideoPlayerApiWithSuffix(
 /// Clears the Now Playing Info Center and deactivates the audio session.
 /// Only available on iOS.
 - (void)clearNowPlayingMetadataWithError:(FlutterError *_Nullable *_Nonnull)error;
+/// Returns whether Picture in Picture is supported for this player.
+/// Only players rendered with a platform view support it (iOS only).
+///
+/// @return `nil` only when `error != nil`.
+- (nullable NSNumber *)isPictureInPictureSupported:(FlutterError *_Nullable *_Nonnull)error;
+/// Sets whether Picture in Picture should start automatically when the app
+/// moves to the background (iOS 14.2+).
+- (void)setPictureInPictureAutoEnterEnabled:(BOOL)autoEnterEnabled
+                                      error:(FlutterError *_Nullable *_Nonnull)error;
+/// Requests to start Picture in Picture. Returns whether the request was
+/// accepted.
+///
+/// @return `nil` only when `error != nil`.
+- (nullable NSNumber *)startPictureInPicture:(FlutterError *_Nullable *_Nonnull)error;
+/// Requests to stop Picture in Picture.
+- (void)stopPictureInPicture:(FlutterError *_Nullable *_Nonnull)error;
+/// Replaces the current media without recreating the AVPlayer, so that a
+/// Picture in Picture window and the remote command center stay attached.
+- (void)replaceDataSourceWithOptions:(FVPCreationOptions *)options
+                               error:(FlutterError *_Nullable *_Nonnull)error;
 @end
 
 extern void SetUpFVPVideoPlayerInstanceApi(id<FlutterBinaryMessenger> binaryMessenger,

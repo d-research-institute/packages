@@ -95,34 +95,31 @@ abstract class VideoPlayerInstanceApi {
   void setNowPlayingMetadata(NowPlayingMetadata metadata);
   /// Clears the Now Playing Info Center and deactivates the audio session.
   /// Only available on iOS.
-  @ObjCSelector('clearNowPlayingMetadata')
+  // No @ObjCSelector: the generated selector must stay
+  // `clearNowPlayingMetadataWithError:`, which FVPVideoPlayer implements.
   void clearNowPlayingMetadata();
-}
 
-/// Events sent from the platform to Flutter.
-enum VideoEvent {
-  /// The player has initialized.
-  initialized,
-  /// The video completed playback.
-  completed,
-  /// The player started buffering.
-  bufferingStart,
-  /// The player ended buffering.
-  bufferingEnd,
-  /// The buffered regions changed.
-  bufferingUpdate,
-  /// The player is playing changed.
-  isPlayingChanged,
-  /// An error occurred.
-  error,
-  /// User requested next track via remote control.
-  nextTrackRequested,
-  /// User requested previous track via remote control.
-  previousTrackRequested,
-}
+  /// Returns whether Picture in Picture is supported for this player.
+  /// Only players rendered with a platform view support it (iOS only).
+  @ObjCSelector('isPictureInPictureSupported')
+  bool isPictureInPictureSupported();
 
-@FlutterApi()
-abstract class VideoPlayerEventApi {
-  /// Called when a video event occurs.
-  void onVideoEvent(int playerId, VideoEvent event, Map<String, Object?> data);
+  /// Sets whether Picture in Picture should start automatically when the app
+  /// moves to the background (iOS 14.2+).
+  @ObjCSelector('setPictureInPictureAutoEnterEnabled:')
+  void setPictureInPictureParams(bool autoEnterEnabled);
+
+  /// Requests to start Picture in Picture. Returns whether the request was
+  /// accepted.
+  @ObjCSelector('startPictureInPicture')
+  bool startPictureInPicture();
+
+  /// Requests to stop Picture in Picture.
+  @ObjCSelector('stopPictureInPicture')
+  void stopPictureInPicture();
+
+  /// Replaces the current media without recreating the AVPlayer, so that a
+  /// Picture in Picture window and the remote command center stay attached.
+  @ObjCSelector('replaceDataSourceWithOptions:')
+  void replaceDataSource(CreationOptions options);
 }

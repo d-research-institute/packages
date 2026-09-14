@@ -37,5 +37,16 @@
 - (void)videoPlayerDidRequestPreviousTrack;
 /// Called periodically during playback to update the current position.
 /// This enables position updates even when the app is in background.
-- (void)videoPlayerDidUpdatePosition:(int64_t)position duration:(int64_t)duration isPlaying:(BOOL)isPlaying;
+- (void)videoPlayerDidUpdatePosition:(int64_t)position
+                            duration:(int64_t)duration
+                           isPlaying:(BOOL)isPlaying;
+/// Called when Picture in Picture has started.
+- (void)videoPlayerDidStartPictureInPicture;
+/// Called when Picture in Picture has stopped, or when a start request failed.
+- (void)videoPlayerDidStopPictureInPicture;
+/// Called when the user asks to return to the app from the Picture in Picture window. The app is
+/// expected to restore its full player UI.
+- (void)videoPlayerDidRequestPictureInPictureUserInterfaceRestore;
+/// Called when media replaced via replaceDataSource is ready to play.
+- (void)videoPlayerDidReplaceDataSourceWithDuration:(int64_t)duration size:(CGSize)size;
 @end

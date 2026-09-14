@@ -34,6 +34,19 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Updates the playing state of the video player.
 - (void)updatePlayingState;
+
+/// Replaces the current AVPlayerItem with the given item, keeping the AVPlayer instance.
+///
+/// Observers and the video output are moved to the new item, and a "dataSourceReplaced" event is
+/// reported once the new item is ready to play. Subclasses that override this must call super.
+- (void)replacePlayerItem:(AVPlayerItem *)item;
+
+#if TARGET_OS_IOS
+/// Whether this player can enter Picture in Picture at all. The base implementation checks
+/// AVPictureInPictureController support; subclasses that do not render via an on-screen
+/// AVPlayerLayer should return NO.
+- (BOOL)supportsPictureInPicture;
+#endif
 @end
 
 NS_ASSUME_NONNULL_END

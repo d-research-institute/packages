@@ -8,11 +8,17 @@
 #import <GLKit/GLKit.h>
 
 #if TARGET_OS_IOS
-#import <MediaPlayer/MediaPlayer.h>
 #import <AVFoundation/AVAudioSession.h>
+#import <AVKit/AVKit.h>
+#import <MediaPlayer/MediaPlayer.h>
 #endif
 
 #import "./include/video_player_avfoundation/AVAssetTrackUtils.h"
+
+#if TARGET_OS_IOS
+@interface FVPVideoPlayer () <AVPictureInPictureControllerDelegate>
+@end
+#endif
 
 static void *timeRangeContext = &timeRangeContext;
 static void *statusContext = &statusContext;
@@ -76,7 +82,15 @@ static NSDictionary<NSString *, NSValue *> *FVPGetPlayerItemObservations(void) {
   BOOL _listenersRegistered;
   // Token for periodic time observer (for background position updates).
   id _timeObserverToken;
+  // Whether the current item was set via replacePlayerItem: and has not become ready yet. While
+  // set, the next ready-to-play status is reported as "dataSourceReplaced" instead of
+  // "initialized".
+  BOOL _pendingDataSourceReplacement;
 #if TARGET_OS_IOS
+  // The controller driving Picture in Picture, created lazily from pictureInPictureLayer.
+  AVPictureInPictureController *_pictureInPictureController;
+  // Whether Picture in Picture should start automatically when the app enters the background.
+  BOOL _pictureInPictureAutoEnterEnabled;
   // Whether RemoteCommandCenter has been configured.
   BOOL _isRemoteCommandCenterConfigured;
   // Current metadata for Now Playing Info.
@@ -98,6 +112,49 @@ static NSDictionary<NSString *, NSValue *> *FVPGetPlayerItemObservations(void) {
 
   _viewProvider = viewProvider;
 
+  [self configurePlayerItem:item];
+
+  _player = [avFactory playerWithPlayerItem:item];
+  _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
+
+#if TARGET_OS_IOS
+  // Allow background playback - prevent display sleep from stopping audio
+  if (@available(iOS 12.0, *)) {
+    _player.preventsDisplaySleepDuringVideoPlayback = NO;
+  }
+
+  // Disable automatic stalling to allow background playback to continue
+  if (@available(iOS 10.0, *)) {
+    _player.automaticallyWaitsToMinimizeStalling = NO;
+  }
+
+  // NOTE: Audio session is NOT configured here to avoid showing RemoteCommandCenter at app startup.
+  // Audio session will be configured in setupAudioSessionForPlayback when playback actually starts.
+  // This prevents the audio session from being activated before the user initiates playback.
+#endif
+
+  // Configure output.
+  NSDictionary *pixBuffAttributes = @{
+    (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+    (id)kCVPixelBufferIOSurfacePropertiesKey : @{}
+  };
+  _videoOutput = [avFactory videoOutputWithPixelBufferAttributes:pixBuffAttributes];
+
+  return self;
+}
+
++ (AVPlayerItem *)playerItemWithCreationOptions:(FVPCreationOptions *)options {
+  NSDictionary<NSString *, NSString *> *headers = options.httpHeaders;
+  NSDictionary<NSString *, id> *itemOptions =
+      headers.count == 0 ? nil : @{@"AVURLAssetHTTPHeaderFieldsKey" : headers};
+  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL URLWithString:options.uri]
+                                          options:itemOptions];
+  return [AVPlayerItem playerItemWithAsset:asset];
+}
+
+/// Applies per-item configuration (buffer limits and rotation handling) to an item that is about
+/// to become this player's current item.
+- (void)configurePlayerItem:(AVPlayerItem *)item {
   AVAsset *asset = [item asset];
   void (^assetCompletionHandler)(void) = ^{
     if ([asset statusOfValueForKey:@"tracks" error:nil] == AVKeyValueStatusLoaded) {
@@ -106,6 +163,8 @@ static NSDictionary<NSString *, NSValue *> *FVPGetPlayerItemObservations(void) {
         AVAssetTrack *videoTrack = tracks[0];
         void (^trackCompletionHandler)(void) = ^{
           if (self->_disposed) return;
+          // Ignore results for an item that has since been replaced.
+          if (self->_player && self->_player.currentItem != item) return;
           if ([videoTrack statusOfValueForKey:@"preferredTransform"
                                         error:nil] == AVKeyValueStatusLoaded) {
             // Rotate the video by using a videoComposition and the preferredTransform
@@ -136,35 +195,45 @@ static NSDictionary<NSString *, NSValue *> *FVPGetPlayerItemObservations(void) {
     item.preferredForwardBufferDuration = 30.0;
   }
 
-  _player = [avFactory playerWithPlayerItem:item];
-  _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
-
-#if TARGET_OS_IOS
-  // Allow background playback - prevent display sleep from stopping audio
-  if (@available(iOS 12.0, *)) {
-    _player.preventsDisplaySleepDuringVideoPlayback = NO;
-  }
-
-  // Disable automatic stalling to allow background playback to continue
-  if (@available(iOS 10.0, *)) {
-    _player.automaticallyWaitsToMinimizeStalling = NO;
-  }
-
-  // NOTE: Audio session is NOT configured here to avoid showing RemoteCommandCenter at app startup.
-  // Audio session will be configured in setupAudioSessionForPlayback when playback actually starts.
-  // This prevents the audio session from being activated before the user initiates playback.
-#endif
-
-  // Configure output.
-  NSDictionary *pixBuffAttributes = @{
-    (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
-    (id)kCVPixelBufferIOSurfacePropertiesKey : @{}
-  };
-  _videoOutput = [avFactory videoOutputWithPixelBufferAttributes:pixBuffAttributes];
-
   [asset loadValuesAsynchronouslyForKeys:@[ @"tracks" ] completionHandler:assetCompletionHandler];
+}
 
-  return self;
+- (void)replacePlayerItem:(AVPlayerItem *)item {
+  AVPlayerItem *oldItem = _player.currentItem;
+  if (oldItem) {
+    if (_listenersRegistered) {
+      FVPRemoveKeyValueObservers(self, FVPGetPlayerItemObservations(), oldItem);
+      [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                      name:AVPlayerItemDidPlayToEndTimeNotification
+                                                    object:oldItem];
+    }
+    // An AVPlayerItemVideoOutput can only be attached to one item at a time.
+    if ([oldItem.outputs containsObject:_videoOutput]) {
+      [oldItem removeOutput:_videoOutput];
+    }
+  }
+
+  [self configurePlayerItem:item];
+  _preferredTransform = CGAffineTransformIdentity;
+  _pendingDataSourceReplacement = YES;
+  // The new item reports "dataSourceReplaced" (rather than "initialized") once it is ready, and
+  // play/pause requests are re-applied at that point.
+  _isInitialized = NO;
+
+  // Keeping the same AVPlayer means anything bound to it (the AVPlayerLayer shown in a Picture in
+  // Picture window, the remote command center handlers) keeps working across the switch.
+  [_player replaceCurrentItemWithPlayerItem:item];
+  NSLog(@"[VideoPlayer] Replaced current item, isPlaying: %@", _isPlaying ? @"YES" : @"NO");
+
+  if (_listenersRegistered) {
+    FVPRegisterKeyValueObservers(self, FVPGetPlayerItemObservations(), item);
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(itemDidPlayToEndTime:)
+                                                 name:AVPlayerItemDidPlayToEndTimeNotification
+                                               object:item];
+    // In case the item is already ready (e.g. a cached asset), report it immediately.
+    [self reportStatusForPlayerItem:item];
+  }
 }
 
 - (void)dealloc {
@@ -183,6 +252,17 @@ static NSDictionary<NSString *, NSValue *> *FVPGetPlayerItemObservations(void) {
   _disposed = YES;
 
 #if TARGET_OS_IOS
+  // Tear down Picture in Picture so that a window cannot outlive its player.
+  if (_pictureInPictureController) {
+    if (_pictureInPictureController.isPictureInPictureActive) {
+      [_pictureInPictureController stopPictureInPicture];
+    }
+    _pictureInPictureController.delegate = nil;
+    _pictureInPictureController = nil;
+  }
+  _isPictureInPictureActive = NO;
+  _isPictureInPictureStarting = NO;
+
   // NOTE: Do NOT clean up remote command center here.
   // This allows the RemoteCommandCenter to persist between track changes.
   // The new player will take over the command handlers.
@@ -197,9 +277,10 @@ static NSDictionary<NSString *, NSValue *> *FVPGetPlayerItemObservations(void) {
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:UIApplicationDidEnterBackgroundNotification
                                                   object:nil];
-    [[NSNotificationCenter defaultCenter] removeObserver:self
-                                                    name:UIApplicationWillEnterForegroundNotification
-                                                  object:nil];
+    [[NSNotificationCenter defaultCenter]
+        removeObserver:self
+                  name:UIApplicationWillEnterForegroundNotification
+                object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:UIApplicationDidBecomeActiveNotification
                                                   object:nil];
@@ -246,21 +327,28 @@ static NSDictionary<NSString *, NSValue *> *FVPGetPlayerItemObservations(void) {
     // Add periodic time observer for background position updates.
     // This allows Dart side to receive position updates even when app is in background.
     __weak typeof(self) weakSelf = self;
-    CMTime interval = CMTimeMake(1, 2); // 500ms interval
-    _timeObserverToken = [_player addPeriodicTimeObserverForInterval:interval
-                                                               queue:dispatch_get_main_queue()
-                                                          usingBlock:^(CMTime time) {
-      __strong typeof(weakSelf) strongSelf = weakSelf;
-      if (!strongSelf || strongSelf->_disposed) return;
+    CMTime interval = CMTimeMake(1, 2);  // 500ms interval
+    _timeObserverToken = [_player
+        addPeriodicTimeObserverForInterval:interval
+                                     queue:dispatch_get_main_queue()
+                                usingBlock:^(CMTime time) {
+                                  __strong typeof(weakSelf) strongSelf = weakSelf;
+                                  if (!strongSelf || strongSelf->_disposed) return;
 
-      // Only send position updates if the listener supports it (optional method)
-      if ([strongSelf.eventListener respondsToSelector:@selector(videoPlayerDidUpdatePosition:duration:isPlaying:)]) {
-        int64_t position = FVPCMTimeToMillis(time);
-        int64_t duration = strongSelf.duration;
-        BOOL isPlaying = strongSelf->_isPlaying;
-        [strongSelf.eventListener videoPlayerDidUpdatePosition:position duration:duration isPlaying:isPlaying];
-      }
-    }];
+                                  // Only send position updates if the listener supports it
+                                  // (optional method)
+                                  if ([strongSelf.eventListener
+                                          respondsToSelector:@selector
+                                          (videoPlayerDidUpdatePosition:duration:isPlaying:)]) {
+                                    int64_t position = FVPCMTimeToMillis(time);
+                                    int64_t duration = strongSelf.duration;
+                                    BOOL isPlaying = strongSelf->_isPlaying;
+                                    [strongSelf.eventListener
+                                        videoPlayerDidUpdatePosition:position
+                                                            duration:duration
+                                                           isPlaying:isPlaying];
+                                  }
+                                }];
 
     _listenersRegistered = YES;
   }
@@ -362,7 +450,8 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
     // Important: Make sure to cast the object to AVPlayer when observing the rate property,
     // as it is not available in AVPlayerItem.
     AVPlayer *player = (AVPlayer *)object;
-    NSLog(@"[VideoPlayer] Rate changed to: %f, isPlaying: %@", player.rate, _isPlaying ? @"YES" : @"NO");
+    NSLog(@"[VideoPlayer] Rate changed to: %f, isPlaying: %@", player.rate,
+          _isPlaying ? @"YES" : @"NO");
 
     // If rate becomes 0 while we think we're playing, check the reason
     if (player.rate == 0 && _isPlaying) {
@@ -390,6 +479,7 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
            @"reportStatusForPlayerItem was called when the event listener was not set.");
   switch (item.status) {
     case AVPlayerItemStatusFailed:
+      _pendingDataSourceReplacement = NO;
       [self sendFailedToLoadVideoEvent];
       break;
     case AVPlayerItemStatusUnknown:
@@ -397,10 +487,33 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
     case AVPlayerItemStatusReadyToPlay:
       if (!_isInitialized) {
         [item addOutput:_videoOutput];
-        [self reportInitialized];
+        if (_pendingDataSourceReplacement) {
+          _pendingDataSourceReplacement = NO;
+          [self reportDataSourceReplaced];
+        } else {
+          [self reportInitialized];
+        }
         [self updatePlayingState];
+#if TARGET_OS_IOS
+        if (_isRemoteCommandCenterConfigured) {
+          // Refresh duration/position shown on the lock screen for the current item.
+          [self updateNowPlayingInfo];
+        }
+#endif
       }
       break;
+  }
+}
+
+- (void)reportDataSourceReplaced {
+  AVPlayerItem *currentItem = self.player.currentItem;
+  NSAssert(currentItem.status == AVPlayerItemStatusReadyToPlay,
+           @"reportDataSourceReplaced was called when the item wasn't ready to play.");
+  _isInitialized = YES;
+  if ([self.eventListener
+          respondsToSelector:@selector(videoPlayerDidReplaceDataSourceWithDuration:size:)]) {
+    [self.eventListener videoPlayerDidReplaceDataSourceWithDuration:self.duration
+                                                               size:currentItem.presentationSize];
   }
 }
 
@@ -630,7 +743,8 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
 
 - (void)applicationWillResignActive:(NSNotification *)notification {
   // This fires BEFORE the app goes to background
-  NSLog(@"[VideoPlayer] App will resign active, isPlaying: %@, rate: %f", _isPlaying ? @"YES" : @"NO", _player.rate);
+  NSLog(@"[VideoPlayer] App will resign active, isPlaying: %@, rate: %f",
+        _isPlaying ? @"YES" : @"NO", _player.rate);
 
   if (_isPlaying) {
     // Activate audio session before going to background
@@ -652,7 +766,8 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
 - (void)applicationDidEnterBackground:(NSNotification *)notification {
   // Remember if we were playing to continue playback in background
   _wasPlayingBeforeBackground = _isPlaying;
-  NSLog(@"[VideoPlayer] App entered background, isPlaying: %@, rate: %f", _isPlaying ? @"YES" : @"NO", _player.rate);
+  NSLog(@"[VideoPlayer] App entered background, isPlaying: %@, rate: %f",
+        _isPlaying ? @"YES" : @"NO", _player.rate);
 
   if (_isPlaying) {
     // Double-check rate is maintained after entering background
@@ -674,9 +789,7 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification {
   NSLog(@"[VideoPlayer] App became active, wasPlayingBeforeBackground: %@, isPlaying: %@, rate: %f",
-        _wasPlayingBeforeBackground ? @"YES" : @"NO",
-        _isPlaying ? @"YES" : @"NO",
-        _player.rate);
+        _wasPlayingBeforeBackground ? @"YES" : @"NO", _isPlaying ? @"YES" : @"NO", _player.rate);
 
   // Check if player was stopped by another app (e.g., audio session interruption)
   // If our flag says playing but player rate is 0, sync our state
@@ -738,11 +851,14 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
   [commandCenter.pauseCommand addTarget:self action:@selector(handlePauseCommand:)];
 
   commandCenter.togglePlayPauseCommand.enabled = YES;
-  [commandCenter.togglePlayPauseCommand addTarget:self action:@selector(handleTogglePlayPauseCommand:)];
+  [commandCenter.togglePlayPauseCommand addTarget:self
+                                           action:@selector(handleTogglePlayPauseCommand:)];
 
   if (!_isLiveStream) {
     commandCenter.changePlaybackPositionCommand.enabled = YES;
-    [commandCenter.changePlaybackPositionCommand addTarget:self action:@selector(handleChangePlaybackPositionCommand:)];
+    [commandCenter.changePlaybackPositionCommand
+        addTarget:self
+           action:@selector(handleChangePlaybackPositionCommand:)];
   } else {
     commandCenter.changePlaybackPositionCommand.enabled = NO;
   }
@@ -785,14 +901,16 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
     _isPlaying = !_isPlaying;
     [self updatePlayingState];
     [self updateNowPlayingInfo];
-    NSLog(@"[VideoPlayer] RemoteCommand: TOGGLE completed, isPlaying=%@", _isPlaying ? @"YES" : @"NO");
+    NSLog(@"[VideoPlayer] RemoteCommand: TOGGLE completed, isPlaying=%@",
+          _isPlaying ? @"YES" : @"NO");
   }
   return MPRemoteCommandHandlerStatusSuccess;
 }
 
 - (MPRemoteCommandHandlerStatus)handleChangePlaybackPositionCommand:(MPRemoteCommandEvent *)event {
   if (!_disposed) {
-    MPChangePlaybackPositionCommandEvent *positionEvent = (MPChangePlaybackPositionCommandEvent *)event;
+    MPChangePlaybackPositionCommandEvent *positionEvent =
+        (MPChangePlaybackPositionCommandEvent *)event;
     CMTime targetTime = CMTimeMakeWithSeconds(positionEvent.positionTime, NSEC_PER_SEC);
     NSLog(@"[VideoPlayer] RemoteCommand: SEEK to %.2f seconds", positionEvent.positionTime);
 
@@ -802,17 +920,17 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
     // Seek to the target time with completion handler
     __weak typeof(self) weakSelf = self;
     [_player seekToTime:targetTime
-        toleranceBefore:kCMTimeZero
-         toleranceAfter:kCMTimeZero
-      completionHandler:^(BOOL finished) {
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (strongSelf && !strongSelf->_disposed && finished) {
-          dispatch_async(dispatch_get_main_queue(), ^{
-            // Update again with actual position after seek completes
-            [strongSelf updateNowPlayingInfo];
-          });
-        }
-      }];
+          toleranceBefore:kCMTimeZero
+           toleranceAfter:kCMTimeZero
+        completionHandler:^(BOOL finished) {
+          __strong typeof(weakSelf) strongSelf = weakSelf;
+          if (strongSelf && !strongSelf->_disposed && finished) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+              // Update again with actual position after seek completes
+              [strongSelf updateNowPlayingInfo];
+            });
+          }
+        }];
   }
   return MPRemoteCommandHandlerStatusSuccess;
 }
@@ -938,12 +1056,14 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
       if (data) {
         UIImage *image = [UIImage imageWithData:data];
         if (image) {
-          MPMediaItemArtwork *artwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size
-                                                                        requestHandler:^UIImage * _Nonnull(CGSize size) {
-            return image;
-          }];
+          MPMediaItemArtwork *artwork =
+              [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size
+                                              requestHandler:^UIImage *_Nonnull(CGSize size) {
+                                                return image;
+                                              }];
           dispatch_async(dispatch_get_main_queue(), ^{
-            NSMutableDictionary *updatedMetadata = [self->_currentMetadata mutableCopy] ?: [NSMutableDictionary dictionary];
+            NSMutableDictionary *updatedMetadata =
+                [self->_currentMetadata mutableCopy] ?: [NSMutableDictionary dictionary];
             updatedMetadata[MPMediaItemPropertyArtwork] = artwork;
             self->_currentMetadata = [updatedMetadata copy];
             [self updateNowPlayingInfo];
@@ -959,6 +1079,198 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
 
 - (void)clearNowPlayingMetadata {
   [self cleanupRemoteCommandCenter];
+}
+
+#endif
+
+#pragma mark - Data source replacement (Pigeon API)
+
+- (void)replaceDataSourceWithOptions:(FVPCreationOptions *)options
+                               error:(FlutterError *_Nullable *_Nonnull)error {
+  if (_disposed) {
+    *error = [FlutterError errorWithCode:@"video_player"
+                                 message:@"The player has been disposed."
+                                 details:nil];
+    return;
+  }
+  @try {
+    AVPlayerItem *item = [FVPVideoPlayer playerItemWithCreationOptions:options];
+    [self replacePlayerItem:item];
+  } @catch (NSException *exception) {
+    *error = [FlutterError errorWithCode:@"video_player" message:exception.reason details:nil];
+  }
+}
+
+#pragma mark - Picture in Picture
+
+#if TARGET_OS_IOS
+
+- (BOOL)supportsPictureInPicture {
+  return [AVPictureInPictureController isPictureInPictureSupported];
+}
+
+- (BOOL)keepsPlayerLayerAttachedInBackground {
+  return _isPictureInPictureActive || _isPictureInPictureStarting ||
+         (_pictureInPictureAutoEnterEnabled && _pictureInPictureController != nil);
+}
+
+- (void)setPictureInPictureLayer:(AVPlayerLayer *)pictureInPictureLayer {
+  _pictureInPictureLayer = pictureInPictureLayer;
+  [self ensurePictureInPictureController];
+}
+
+/// Returns the Picture in Picture controller for the current layer, creating it if needed.
+///
+/// Returns nil when Picture in Picture is unsupported for this player, or when no layer has been
+/// attached yet. While a Picture in Picture session is active or starting, the existing controller
+/// is kept even if a different layer has since been attached; it is rebound once the session ends.
+- (nullable AVPictureInPictureController *)ensurePictureInPictureController {
+  if (_disposed || ![self supportsPictureInPicture]) {
+    return nil;
+  }
+  AVPlayerLayer *layer = _pictureInPictureLayer;
+  if (!layer) {
+    return _pictureInPictureController;
+  }
+  if (_pictureInPictureController) {
+    if (_pictureInPictureController.playerLayer == layer || _isPictureInPictureActive ||
+        _isPictureInPictureStarting) {
+      return _pictureInPictureController;
+    }
+    _pictureInPictureController.delegate = nil;
+  }
+  _pictureInPictureController = [[AVPictureInPictureController alloc] initWithPlayerLayer:layer];
+  _pictureInPictureController.delegate = self;
+  [self applyPictureInPictureParams];
+  NSLog(@"[VideoPlayer] Picture in Picture controller %@",
+        _pictureInPictureController ? @"created" : @"could not be created");
+  return _pictureInPictureController;
+}
+
+- (void)applyPictureInPictureParams {
+  if (@available(iOS 14.2, *)) {
+    _pictureInPictureController.canStartPictureInPictureAutomaticallyFromInline =
+        _pictureInPictureAutoEnterEnabled;
+  }
+}
+
+- (nullable NSNumber *)isPictureInPictureSupported:(FlutterError *_Nullable *_Nonnull)error {
+  return @([self supportsPictureInPicture]);
+}
+
+- (void)setPictureInPictureAutoEnterEnabled:(BOOL)autoEnterEnabled
+                                      error:(FlutterError *_Nullable *_Nonnull)error {
+  _pictureInPictureAutoEnterEnabled = autoEnterEnabled;
+  [self ensurePictureInPictureController];
+  [self applyPictureInPictureParams];
+  NSLog(@"[VideoPlayer] Picture in Picture auto-enter %@",
+        autoEnterEnabled ? @"enabled" : @"disabled");
+}
+
+- (nullable NSNumber *)startPictureInPicture:(FlutterError *_Nullable *_Nonnull)error {
+  AVPictureInPictureController *controller = [self ensurePictureInPictureController];
+  if (!controller) {
+    NSLog(
+        @"[VideoPlayer] Picture in Picture unavailable (unsupported or no player layer attached)");
+    return @NO;
+  }
+  if (controller.isPictureInPictureActive) {
+    return @YES;
+  }
+  if (!controller.isPictureInPicturePossible) {
+    NSLog(@"[VideoPlayer] Picture in Picture is not possible right now");
+    return @NO;
+  }
+  _isPictureInPictureStarting = YES;
+  [controller startPictureInPicture];
+  NSLog(@"[VideoPlayer] Picture in Picture start requested");
+  return @YES;
+}
+
+- (void)stopPictureInPicture:(FlutterError *_Nullable *_Nonnull)error {
+  if (_pictureInPictureController.isPictureInPictureActive || _isPictureInPictureStarting) {
+    [_pictureInPictureController stopPictureInPicture];
+    NSLog(@"[VideoPlayer] Picture in Picture stop requested");
+  }
+}
+
+#pragma mark AVPictureInPictureControllerDelegate
+
+- (void)pictureInPictureControllerWillStartPictureInPicture:
+    (AVPictureInPictureController *)pictureInPictureController {
+  _isPictureInPictureStarting = YES;
+  NSLog(@"[VideoPlayer] Picture in Picture will start");
+}
+
+- (void)pictureInPictureControllerDidStartPictureInPicture:
+    (AVPictureInPictureController *)pictureInPictureController {
+  _isPictureInPictureStarting = NO;
+  _isPictureInPictureActive = YES;
+  NSLog(@"[VideoPlayer] Picture in Picture did start");
+  if (!_disposed &&
+      [self.eventListener respondsToSelector:@selector(videoPlayerDidStartPictureInPicture)]) {
+    [self.eventListener videoPlayerDidStartPictureInPicture];
+  }
+}
+
+- (void)pictureInPictureController:(AVPictureInPictureController *)pictureInPictureController
+    failedToStartPictureInPictureWithError:(NSError *)error {
+  _isPictureInPictureStarting = NO;
+  _isPictureInPictureActive = NO;
+  NSLog(@"[VideoPlayer] Picture in Picture failed to start: %@", error);
+  if (!_disposed &&
+      [self.eventListener respondsToSelector:@selector(videoPlayerDidStopPictureInPicture)]) {
+    [self.eventListener videoPlayerDidStopPictureInPicture];
+  }
+}
+
+- (void)pictureInPictureControllerWillStopPictureInPicture:
+    (AVPictureInPictureController *)pictureInPictureController {
+  NSLog(@"[VideoPlayer] Picture in Picture will stop");
+}
+
+- (void)pictureInPictureControllerDidStopPictureInPicture:
+    (AVPictureInPictureController *)pictureInPictureController {
+  _isPictureInPictureStarting = NO;
+  _isPictureInPictureActive = NO;
+  NSLog(@"[VideoPlayer] Picture in Picture did stop");
+  if (!_disposed &&
+      [self.eventListener respondsToSelector:@selector(videoPlayerDidStopPictureInPicture)]) {
+    [self.eventListener videoPlayerDidStopPictureInPicture];
+  }
+  // Rebind to the current layer in case the platform view was recreated during the session.
+  [self ensurePictureInPictureController];
+}
+
+- (void)pictureInPictureController:(AVPictureInPictureController *)pictureInPictureController
+    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler:
+        (void (^)(BOOL restored))completionHandler {
+  NSLog(@"[VideoPlayer] Picture in Picture requested user interface restore");
+  if (!_disposed &&
+      [self.eventListener respondsToSelector:@selector
+                          (videoPlayerDidRequestPictureInPictureUserInterfaceRestore)]) {
+    [self.eventListener videoPlayerDidRequestPictureInPictureUserInterfaceRestore];
+  }
+  // Restoring the UI is the app's responsibility (handled on the Dart side); complete right away.
+  completionHandler(YES);
+}
+
+#else
+
+- (nullable NSNumber *)isPictureInPictureSupported:(FlutterError *_Nullable *_Nonnull)error {
+  return @NO;
+}
+
+- (void)setPictureInPictureAutoEnterEnabled:(BOOL)autoEnterEnabled
+                                      error:(FlutterError *_Nullable *_Nonnull)error {
+  // macOS: Picture in Picture is not supported.
+}
+
+- (nullable NSNumber *)startPictureInPicture:(FlutterError *_Nullable *_Nonnull)error {
+  return @NO;
+}
+
+- (void)stopPictureInPicture:(FlutterError *_Nullable *_Nonnull)error {
 }
 
 #endif

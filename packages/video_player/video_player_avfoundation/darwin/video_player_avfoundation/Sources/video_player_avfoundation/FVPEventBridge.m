@@ -115,12 +115,35 @@
   [self sendOrQueue:@{@"event" : @"previousTrackRequested"}];
 }
 
-- (void)videoPlayerDidUpdatePosition:(int64_t)position duration:(int64_t)duration isPlaying:(BOOL)isPlaying {
+- (void)videoPlayerDidUpdatePosition:(int64_t)position
+                            duration:(int64_t)duration
+                           isPlaying:(BOOL)isPlaying {
   [self sendOrQueue:@{
     @"event" : @"positionUpdate",
     @"position" : @(position),
     @"duration" : @(duration),
     @"isPlaying" : @(isPlaying)
+  }];
+}
+
+- (void)videoPlayerDidStartPictureInPicture {
+  [self sendOrQueue:@{@"event" : @"pictureInPictureStarted"}];
+}
+
+- (void)videoPlayerDidStopPictureInPicture {
+  [self sendOrQueue:@{@"event" : @"pictureInPictureStopped"}];
+}
+
+- (void)videoPlayerDidRequestPictureInPictureUserInterfaceRestore {
+  [self sendOrQueue:@{@"event" : @"pictureInPictureRestoreUserInterface"}];
+}
+
+- (void)videoPlayerDidReplaceDataSourceWithDuration:(int64_t)duration size:(CGSize)size {
+  [self sendOrQueue:@{
+    @"event" : @"dataSourceReplaced",
+    @"duration" : @(duration),
+    @"width" : @(size.width),
+    @"height" : @(size.height)
   }];
 }
 

@@ -63,9 +63,32 @@ class AVFoundationVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<int?> createWithOptions(VideoCreationOptions options) async {
-    final DataSource dataSource = options.dataSource;
     final VideoViewType viewType = options.viewType;
+    final CreationOptions pigeonCreationOptions = await _creationOptionsFor(
+      options.dataSource,
+    );
 
+    final int playerId;
+    final VideoPlayerViewState state;
+    switch (viewType) {
+      case VideoViewType.textureView:
+        final TexturePlayerIds ids = await _api.createForTextureView(
+          pigeonCreationOptions,
+        );
+        playerId = ids.playerId;
+        state = VideoPlayerTextureViewState(textureId: ids.textureId);
+      case VideoViewType.platformView:
+        playerId = await _api.createForPlatformView(pigeonCreationOptions);
+        state = const VideoPlayerPlatformViewState();
+    }
+    ensurePlayerInitialized(playerId, state);
+
+    return playerId;
+  }
+
+  /// Resolves [dataSource] into the Pigeon creation options (a URI plus HTTP
+  /// headers), looking up asset URLs on the native side.
+  Future<CreationOptions> _creationOptionsFor(DataSource dataSource) async {
     String? uri;
     switch (dataSource.sourceType) {
       case DataSourceType.asset:
@@ -90,29 +113,9 @@ class AVFoundationVideoPlayer extends VideoPlayerPlatform {
         uri = dataSource.uri;
     }
     if (uri == null) {
-      throw ArgumentError('Unable to construct a video asset from $options');
+      throw ArgumentError('Unable to construct a video asset from $dataSource');
     }
-    final pigeonCreationOptions = CreationOptions(
-      uri: uri,
-      httpHeaders: dataSource.httpHeaders,
-    );
-
-    final int playerId;
-    final VideoPlayerViewState state;
-    switch (viewType) {
-      case VideoViewType.textureView:
-        final TexturePlayerIds ids = await _api.createForTextureView(
-          pigeonCreationOptions,
-        );
-        playerId = ids.playerId;
-        state = VideoPlayerTextureViewState(textureId: ids.textureId);
-      case VideoViewType.platformView:
-        playerId = await _api.createForPlatformView(pigeonCreationOptions);
-        state = const VideoPlayerPlatformViewState();
-    }
-    ensurePlayerInitialized(playerId, state);
-
-    return playerId;
+    return CreationOptions(uri: uri, httpHeaders: dataSource.httpHeaders);
   }
 
   /// Returns the API instance for [playerId], creating it if it doesn't already
@@ -192,6 +195,38 @@ class AVFoundationVideoPlayer extends VideoPlayerPlatform {
   bool isMediaControlsSupported() {
     // Media controls are supported on iOS (RemoteCommandCenter)
     return true;
+  }
+
+  @override
+  Future<bool> isPictureInPictureSupported(int playerId) {
+    return _playerWith(id: playerId).isPictureInPictureSupported();
+  }
+
+  @override
+  Future<void> setPictureInPictureParams(
+    int playerId, {
+    required bool autoEnterEnabled,
+  }) {
+    return _playerWith(
+      id: playerId,
+    ).setPictureInPictureParams(autoEnterEnabled: autoEnterEnabled);
+  }
+
+  @override
+  Future<bool> startPictureInPicture(int playerId) {
+    return _playerWith(id: playerId).startPictureInPicture();
+  }
+
+  @override
+  Future<void> stopPictureInPicture(int playerId) {
+    return _playerWith(id: playerId).stopPictureInPicture();
+  }
+
+  @override
+  Future<void> replaceDataSource(int playerId, DataSource dataSource) async {
+    final _PlayerInstance player = _playerWith(id: playerId);
+    final CreationOptions options = await _creationOptionsFor(dataSource);
+    await player.replaceDataSource(options);
   }
 
   @override
@@ -288,6 +323,22 @@ class _PlayerInstance {
     return _api.clearNowPlayingMetadata();
   }
 
+  Future<bool> isPictureInPictureSupported() {
+    return _api.isPictureInPictureSupported();
+  }
+
+  Future<void> setPictureInPictureParams({required bool autoEnterEnabled}) {
+    return _api.setPictureInPictureParams(autoEnterEnabled);
+  }
+
+  Future<bool> startPictureInPicture() => _api.startPictureInPicture();
+
+  Future<void> stopPictureInPicture() => _api.stopPictureInPicture();
+
+  Future<void> replaceDataSource(CreationOptions options) {
+    return _api.replaceDataSource(options);
+  }
+
   Stream<VideoEvent> get videoEvents {
     _eventSubscription ??= _eventChannel.receiveBroadcastStream().listen(
       _onStreamEvent,
@@ -341,6 +392,23 @@ class _PlayerInstance {
         position: Duration(milliseconds: map['position'] as int),
         duration: Duration(milliseconds: map['duration'] as int),
         isPlaying: map['isPlaying'] as bool,
+      ),
+      'pictureInPictureStarted' => VideoEvent(
+        eventType: VideoEventType.pictureInPictureStarted,
+      ),
+      'pictureInPictureStopped' => VideoEvent(
+        eventType: VideoEventType.pictureInPictureStopped,
+      ),
+      'pictureInPictureRestoreUserInterface' => VideoEvent(
+        eventType: VideoEventType.pictureInPictureRestoreUserInterface,
+      ),
+      'dataSourceReplaced' => VideoEvent(
+        eventType: VideoEventType.dataSourceReplaced,
+        duration: Duration(milliseconds: map['duration'] as int),
+        size: Size(
+          (map['width'] as num?)?.toDouble() ?? 0.0,
+          (map['height'] as num?)?.toDouble() ?? 0.0,
+        ),
       ),
       _ => VideoEvent(eventType: VideoEventType.unknown),
     });

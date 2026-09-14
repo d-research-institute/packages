@@ -264,12 +264,7 @@ static void upgradeAudioSessionCategory(AVAudioSessionCategory requestedCategory
 
 /// Returns the AVPlayerItem corresponding to the given player creation options.
 - (nonnull AVPlayerItem *)playerItemWithCreationOptions:(nonnull FVPCreationOptions *)options {
-  NSDictionary<NSString *, NSString *> *headers = options.httpHeaders;
-  NSDictionary<NSString *, id> *itemOptions =
-      headers.count == 0 ? nil : @{@"AVURLAssetHTTPHeaderFieldsKey" : headers};
-  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL URLWithString:options.uri]
-                                          options:itemOptions];
-  return [AVPlayerItem playerItemWithAsset:asset];
+  return [FVPVideoPlayer playerItemWithCreationOptions:options];
 }
 
 @end

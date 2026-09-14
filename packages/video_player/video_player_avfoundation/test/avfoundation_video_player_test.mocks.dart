@@ -22,6 +22,7 @@ import 'package:video_player_avfoundation/src/messages.g.dart' as _i2;
 // ignore_for_file: unnecessary_parenthesis
 // ignore_for_file: camel_case_types
 // ignore_for_file: subtype_of_sealed_class
+// ignore_for_file: invalid_use_of_internal_member
 
 class _FakeTexturePlayerIds_0 extends _i1.SmartFake
     implements _i2.TexturePlayerIds {
@@ -194,6 +195,69 @@ class MockVideoPlayerInstanceApi extends _i1.Mock
   _i4.Future<void> dispose() =>
       (super.noSuchMethod(
             Invocation.method(#dispose, []),
+            returnValue: _i4.Future<void>.value(),
+            returnValueForMissingStub: _i4.Future<void>.value(),
+          )
+          as _i4.Future<void>);
+
+  @override
+  _i4.Future<void> setNowPlayingMetadata(_i2.NowPlayingMetadata? metadata) =>
+      (super.noSuchMethod(
+            Invocation.method(#setNowPlayingMetadata, [metadata]),
+            returnValue: _i4.Future<void>.value(),
+            returnValueForMissingStub: _i4.Future<void>.value(),
+          )
+          as _i4.Future<void>);
+
+  @override
+  _i4.Future<void> clearNowPlayingMetadata() =>
+      (super.noSuchMethod(
+            Invocation.method(#clearNowPlayingMetadata, []),
+            returnValue: _i4.Future<void>.value(),
+            returnValueForMissingStub: _i4.Future<void>.value(),
+          )
+          as _i4.Future<void>);
+
+  @override
+  _i4.Future<bool> isPictureInPictureSupported() =>
+      (super.noSuchMethod(
+            Invocation.method(#isPictureInPictureSupported, []),
+            returnValue: _i4.Future<bool>.value(false),
+            returnValueForMissingStub: _i4.Future<bool>.value(false),
+          )
+          as _i4.Future<bool>);
+
+  @override
+  _i4.Future<void> setPictureInPictureParams(bool? autoEnterEnabled) =>
+      (super.noSuchMethod(
+            Invocation.method(#setPictureInPictureParams, [autoEnterEnabled]),
+            returnValue: _i4.Future<void>.value(),
+            returnValueForMissingStub: _i4.Future<void>.value(),
+          )
+          as _i4.Future<void>);
+
+  @override
+  _i4.Future<bool> startPictureInPicture() =>
+      (super.noSuchMethod(
+            Invocation.method(#startPictureInPicture, []),
+            returnValue: _i4.Future<bool>.value(false),
+            returnValueForMissingStub: _i4.Future<bool>.value(false),
+          )
+          as _i4.Future<bool>);
+
+  @override
+  _i4.Future<void> stopPictureInPicture() =>
+      (super.noSuchMethod(
+            Invocation.method(#stopPictureInPicture, []),
+            returnValue: _i4.Future<void>.value(),
+            returnValueForMissingStub: _i4.Future<void>.value(),
+          )
+          as _i4.Future<void>);
+
+  @override
+  _i4.Future<void> replaceDataSource(_i2.CreationOptions? options) =>
+      (super.noSuchMethod(
+            Invocation.method(#replaceDataSource, [options]),
             returnValue: _i4.Future<void>.value(),
             returnValueForMissingStub: _i4.Future<void>.value(),
           )
