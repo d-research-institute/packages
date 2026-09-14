@@ -40,4 +40,42 @@ void main() {
   test('default implementation isAudioTrackSupportAvailable returns false', () {
     expect(initialInstance.isAudioTrackSupportAvailable(), false);
   });
+
+  test(
+    'default implementation isPictureInPictureSupported returns false',
+    () async {
+      expect(await initialInstance.isPictureInPictureSupported(1), false);
+    },
+  );
+
+  test('default implementation setPictureInPictureParams is a no-op', () async {
+    await expectLater(
+      initialInstance.setPictureInPictureParams(1, autoEnterEnabled: true),
+      completes,
+    );
+  });
+
+  test('default implementation startPictureInPicture returns false', () async {
+    expect(await initialInstance.startPictureInPicture(1), false);
+  });
+
+  test('default implementation stopPictureInPicture is a no-op', () async {
+    await expectLater(initialInstance.stopPictureInPicture(1), completes);
+  });
+
+  test(
+    'default implementation replaceDataSource throws unimplemented',
+    () async {
+      await expectLater(
+        () => initialInstance.replaceDataSource(
+          1,
+          DataSource(
+            sourceType: DataSourceType.network,
+            uri: 'https://a/b.mp4',
+          ),
+        ),
+        throwsUnimplementedError,
+      );
+    },
+  );
 }
