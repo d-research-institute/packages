@@ -855,11 +855,17 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
   // Clear Now Playing Info
   [[MPNowPlayingInfoCenter defaultCenter] setNowPlayingInfo:nil];
 
-  // Deactivate audio session to allow other apps to resume
+  // Deactivate the audio session so this app does not keep holding it after the
+  // player is cleaned up.
+  //
+  // Intentionally does NOT pass AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation.
+  // With that option, a music app that this player interrupted resumes on its own
+  // whenever a player is cleaned up: when the user closes the player, and also
+  // briefly when switching from one video to the next (cleanup of the old player
+  // runs before the new one starts). Watching a video is not "temporary audio",
+  // so other apps are left paused and the user resumes them when they want to.
   NSError *error = nil;
-  [[AVAudioSession sharedInstance] setActive:NO
-                                 withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
-                                       error:&error];
+  [[AVAudioSession sharedInstance] setActive:NO error:&error];
   if (error) {
     NSLog(@"[VideoPlayer] Failed to deactivate audio session: %@", error);
   }
