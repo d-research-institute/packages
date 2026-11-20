@@ -6,9 +6,13 @@
 @import video_player_avfoundation;
 @import XCTest;
 
+#if TARGET_OS_IOS
+#import <AVKit/AVKit.h>
+#endif
 #import <OCMock/OCMock.h>
 #import <video_player_avfoundation/AVAssetTrackUtils.h>
 #import <video_player_avfoundation/FVPEventBridge.h>
+#import <video_player_avfoundation/FVPNativeVideoView.h>
 #import <video_player_avfoundation/FVPNativeVideoViewFactory.h>
 #import <video_player_avfoundation/FVPTextureBasedVideoPlayer_Test.h>
 #import <video_player_avfoundation/FVPVideoPlayerPlugin_Test.h>
@@ -962,6 +966,152 @@
   // Video output is added as soon as the status becomes ready to play.
   XCTAssertEqual(item.outputs.count, 1);
 }
+
+- (void)testReplaceDataSourceKeepsPlayerAndReportsDataSourceReplaced {
+  NSObject<FlutterPluginRegistrar> *registrar = OCMProtocolMock(@protocol(FlutterPluginRegistrar));
+  FVPVideoPlayerPlugin *videoPlayerPlugin =
+      [[FVPVideoPlayerPlugin alloc] initWithRegistrar:registrar];
+  FlutterError *error;
+  [videoPlayerPlugin initialize:&error];
+  XCTAssertNil(error);
+  FVPCreationOptions *create = [FVPCreationOptions
+      makeWithUri:@"https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4"
+      httpHeaders:@{}];
+  FVPTexturePlayerIds *identifiers = [videoPlayerPlugin createTexturePlayerWithOptions:create
+                                                                                 error:&error];
+  XCTAssertNil(error);
+  FVPVideoPlayer *player = videoPlayerPlugin.playersByIdentifier[@(identifiers.playerId)];
+  XCTAssertNotNil(player);
+  AVPlayer *avPlayer = player.player;
+  AVPlayerItem *originalItem = avPlayer.currentItem;
+
+  XCTestExpectation *initializedExpectation = [self expectationWithDescription:@"initialized"];
+  XCTestExpectation *replacedExpectation = [self expectationWithDescription:@"dataSourceReplaced"];
+  __block NSDictionary<NSString *, id> *replacedEvent;
+  [(NSObject<FlutterStreamHandler> *)player.eventListener
+      onListenWithArguments:nil
+                  eventSink:^(NSDictionary<NSString *, id> *event) {
+                    if ([event[@"event"] isEqualToString:@"initialized"]) {
+                      [initializedExpectation fulfill];
+                    } else if ([event[@"event"] isEqualToString:@"dataSourceReplaced"]) {
+                      replacedEvent = event;
+                      [replacedExpectation fulfill];
+                    }
+                  }];
+  [self waitForExpectations:@[ initializedExpectation ] timeout:10.0];
+  XCTAssertTrue(player.isInitialized);
+
+  FVPCreationOptions *replacement = [FVPCreationOptions
+      makeWithUri:@"https://flutter.github.io/assets-for-api-docs/assets/videos/butterfly.mp4"
+      httpHeaders:@{}];
+  [player replaceDataSourceWithOptions:replacement error:&error];
+  XCTAssertNil(error);
+  // The AVPlayer instance is kept; only its item changes.
+  XCTAssertEqual(player.player, avPlayer);
+  XCTAssertNotEqual(avPlayer.currentItem, originalItem);
+  // The video output moves from the old item to the new one.
+  XCTAssertEqual(originalItem.outputs.count, 0);
+  XCTAssertFalse(player.isInitialized);
+
+  [self waitForExpectations:@[ replacedExpectation ] timeout:10.0];
+  XCTAssertGreaterThan([replacedEvent[@"duration"] longLongValue], 0);
+  XCTAssertGreaterThan([replacedEvent[@"width"] doubleValue], 0);
+  XCTAssertEqual(avPlayer.currentItem.outputs.count, 1);
+  XCTAssertTrue(player.isInitialized);
+
+  // Disposing after a replacement must not crash (observers were moved to the new item).
+  [player disposeWithError:&error];
+  XCTAssertNil(error);
+}
+
+- (void)testReplaceDataSourceAfterDisposeReturnsError {
+  NSObject<FlutterPluginRegistrar> *registrar = OCMProtocolMock(@protocol(FlutterPluginRegistrar));
+  FVPVideoPlayerPlugin *videoPlayerPlugin =
+      [[FVPVideoPlayerPlugin alloc] initWithRegistrar:registrar];
+  FlutterError *error;
+  [videoPlayerPlugin initialize:&error];
+  FVPCreationOptions *create = [FVPCreationOptions
+      makeWithUri:@"https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4"
+      httpHeaders:@{}];
+  FVPTexturePlayerIds *identifiers = [videoPlayerPlugin createTexturePlayerWithOptions:create
+                                                                                 error:&error];
+  XCTAssertNil(error);
+  FVPVideoPlayer *player = videoPlayerPlugin.playersByIdentifier[@(identifiers.playerId)];
+  [player disposeWithError:&error];
+  XCTAssertNil(error);
+
+  [player replaceDataSourceWithOptions:create error:&error];
+  XCTAssertNotNil(error);
+}
+
+#if TARGET_OS_IOS
+- (void)testTexturePlayerDoesNotSupportPictureInPicture {
+  NSObject<FlutterPluginRegistrar> *registrar = OCMProtocolMock(@protocol(FlutterPluginRegistrar));
+  FVPVideoPlayerPlugin *videoPlayerPlugin =
+      [[FVPVideoPlayerPlugin alloc] initWithRegistrar:registrar];
+  FlutterError *error;
+  [videoPlayerPlugin initialize:&error];
+  FVPCreationOptions *create = [FVPCreationOptions
+      makeWithUri:@"https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4"
+      httpHeaders:@{}];
+  FVPTexturePlayerIds *identifiers = [videoPlayerPlugin createTexturePlayerWithOptions:create
+                                                                                 error:&error];
+  XCTAssertNil(error);
+  FVPVideoPlayer *player = videoPlayerPlugin.playersByIdentifier[@(identifiers.playerId)];
+
+  XCTAssertFalse([player isPictureInPictureSupported:&error].boolValue);
+  XCTAssertFalse([player startPictureInPicture:&error].boolValue);
+  XCTAssertFalse(player.isPictureInPictureActive);
+  XCTAssertFalse(player.isPictureInPictureStarting);
+  [player setPictureInPictureAutoEnterEnabled:YES error:&error];
+  // Without a Picture in Picture controller, auto-enter must not keep the layer attached.
+  XCTAssertFalse(player.keepsPlayerLayerAttachedInBackground);
+  [player stopPictureInPicture:&error];
+  XCTAssertNil(error);
+}
+
+- (void)testPlatformViewPlayerWiresPictureInPictureLayerFromNativeView {
+  NSObject<FlutterPluginRegistrar> *registrar = OCMProtocolMock(@protocol(FlutterPluginRegistrar));
+  FVPVideoPlayerPlugin *videoPlayerPlugin =
+      [[FVPVideoPlayerPlugin alloc] initWithRegistrar:registrar];
+  FlutterError *error;
+  [videoPlayerPlugin initialize:&error];
+  FVPCreationOptions *create = [FVPCreationOptions
+      makeWithUri:@"https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4"
+      httpHeaders:@{}];
+  NSNumber *playerIdentifier = [videoPlayerPlugin createPlatformViewPlayerWithOptions:create
+                                                                                error:&error];
+  XCTAssertNil(error);
+  FVPVideoPlayer *player = videoPlayerPlugin.playersByIdentifier[playerIdentifier];
+  XCTAssertNotNil(player);
+
+  BOOL systemSupport = [AVPictureInPictureController isPictureInPictureSupported];
+  XCTAssertEqual([player isPictureInPictureSupported:&error].boolValue, systemSupport);
+  // No layer has been attached yet, so a start request is refused.
+  XCTAssertFalse([player startPictureInPicture:&error].boolValue);
+  XCTAssertNil(player.pictureInPictureLayer);
+
+  __weak FVPVideoPlayerPlugin *weakPlugin = videoPlayerPlugin;
+  FVPNativeVideoView *view =
+      [[FVPNativeVideoView alloc] initWithPlayerIdentifier:playerIdentifier
+                                            playerProvider:^FVPVideoPlayer *(NSNumber *identifier) {
+                                              return weakPlugin.playersByIdentifier[identifier];
+                                            }];
+  XCTAssertEqual(player.pictureInPictureLayer, view.playerLayer);
+  XCTAssertEqual(view.playerLayer.player, player.player);
+
+  [player setPictureInPictureAutoEnterEnabled:YES error:&error];
+  // The layer is only kept attached in background when a controller could be created, which
+  // requires system support.
+  XCTAssertEqual(player.keepsPlayerLayerAttachedInBackground, systemSupport);
+  [player setPictureInPictureAutoEnterEnabled:NO error:&error];
+  XCTAssertFalse(player.keepsPlayerLayerAttachedInBackground);
+
+  [player disposeWithError:&error];
+  XCTAssertNil(error);
+  XCTAssertFalse(player.isPictureInPictureActive);
+}
+#endif
 
 #if TARGET_OS_IOS
 - (void)testVideoPlayerShouldNotOverwritePlayAndRecordNorDefaultToSpeaker {

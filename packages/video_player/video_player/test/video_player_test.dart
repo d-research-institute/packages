@@ -84,6 +84,41 @@ class FakeController extends ValueNotifier<VideoPlayerValue>
   Future<void> setClosedCaptionFile(
     Future<ClosedCaptionFile>? closedCaptionFile,
   ) async {}
+
+  @override
+  Future<void> setNowPlayingMetadata(VideoMetadata metadata) async {}
+
+  @override
+  Future<void> clearNowPlayingMetadata() async {}
+
+  @override
+  bool get isMediaControlsSupported => false;
+
+  @override
+  set onNextTrackRequested(VoidCallback? callback) {}
+
+  @override
+  set onPreviousTrackRequested(VoidCallback? callback) {}
+
+  @override
+  Future<bool> isPictureInPictureSupported() async => false;
+
+  @override
+  Future<void> setPictureInPictureParams({
+    required bool autoEnterEnabled,
+  }) async {}
+
+  @override
+  Future<bool> startPictureInPicture() async => false;
+
+  @override
+  Future<void> stopPictureInPicture() async {}
+
+  @override
+  set onPictureInPictureRestoreUserInterface(VoidCallback? callback) {}
+
+  @override
+  Future<void> replaceDataSource(DataSource newDataSource) async {}
 }
 
 Future<ClosedCaptionFile> _loadClosedCaption() async =>
@@ -152,6 +187,7 @@ void main() {
     final controller1 = FakeController();
     addTearDown(controller1.dispose);
     controller1.playerId = 101;
+    controller1.value = controller1.value.copyWith(isInitialized: true);
     await tester.pumpWidget(VideoPlayer(controller1));
     expect(
       find.byWidgetPredicate(
@@ -163,6 +199,7 @@ void main() {
     final controller2 = FakeController();
     addTearDown(controller2.dispose);
     controller2.playerId = 102;
+    controller2.value = controller2.value.copyWith(isInitialized: true);
     await tester.pumpWidget(VideoPlayer(controller2));
     expect(
       find.byWidgetPredicate(
@@ -261,6 +298,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     controller.playerId = 1;
+    controller.value = controller.value.copyWith(isInitialized: true);
     await tester.pumpWidget(VideoPlayer(controller));
     final actualRotationCorrection =
         find.byType(RotatedBox).evaluate().single.widget as RotatedBox;
@@ -1127,6 +1165,200 @@ void main() {
     expect(positions[2] - positions[1], greaterThanOrEqualTo(updatesInterval));
   });
 
+  group('Picture in Picture', () {
+    test('methods are no-ops before initialize', () async {
+      final controller = VideoPlayerController.networkUrl(_localhostUri);
+
+      expect(await controller.isPictureInPictureSupported(), isFalse);
+      await controller.setPictureInPictureParams(autoEnterEnabled: true);
+      expect(await controller.startPictureInPicture(), isFalse);
+      await controller.stopPictureInPicture();
+
+      expect(
+        fakeVideoPlayerPlatform.calls,
+        isNot(contains('isPictureInPictureSupported')),
+      );
+      expect(
+        fakeVideoPlayerPlatform.calls,
+        isNot(contains('setPictureInPictureParams')),
+      );
+      expect(
+        fakeVideoPlayerPlatform.calls,
+        isNot(contains('startPictureInPicture')),
+      );
+      expect(
+        fakeVideoPlayerPlatform.calls,
+        isNot(contains('stopPictureInPicture')),
+      );
+    });
+
+    test('methods forward to the platform after initialize', () async {
+      final controller = VideoPlayerController.networkUrl(_localhostUri);
+      await controller.initialize();
+      fakeVideoPlayerPlatform.pictureInPictureSupported = true;
+
+      expect(await controller.isPictureInPictureSupported(), isTrue);
+      await controller.setPictureInPictureParams(autoEnterEnabled: true);
+      await controller.setPictureInPictureParams(autoEnterEnabled: false);
+      expect(await controller.startPictureInPicture(), isTrue);
+      fakeVideoPlayerPlatform.startPictureInPictureResult = false;
+      expect(await controller.startPictureInPicture(), isFalse);
+      await controller.stopPictureInPicture();
+
+      expect(
+        fakeVideoPlayerPlatform.calls,
+        containsAllInOrder(<String>[
+          'isPictureInPictureSupported',
+          'setPictureInPictureParams',
+          'setPictureInPictureParams',
+          'startPictureInPicture',
+          'startPictureInPicture',
+          'stopPictureInPicture',
+        ]),
+      );
+      expect(fakeVideoPlayerPlatform.pictureInPictureAutoEnterParams, <bool>[
+        true,
+        false,
+      ]);
+    });
+
+    testWidgets('events update isPictureInPictureActive and restore callback', (
+      WidgetTester tester,
+    ) async {
+      final controller = VideoPlayerController.networkUrl(_localhostUri);
+      await controller.initialize();
+      var restoreCalls = 0;
+      controller.onPictureInPictureRestoreUserInterface = () => restoreCalls++;
+      final StreamController<VideoEvent> fakeVideoEventStream =
+          fakeVideoPlayerPlatform.streams[controller.playerId]!;
+
+      expect(controller.value.isPictureInPictureActive, isFalse);
+
+      fakeVideoEventStream.add(
+        VideoEvent(eventType: VideoEventType.pictureInPictureStarted),
+      );
+      await tester.pumpAndSettle();
+      expect(controller.value.isPictureInPictureActive, isTrue);
+
+      fakeVideoEventStream.add(
+        VideoEvent(
+          eventType: VideoEventType.pictureInPictureRestoreUserInterface,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(restoreCalls, 1);
+      expect(controller.value.isPictureInPictureActive, isTrue);
+
+      fakeVideoEventStream.add(
+        VideoEvent(eventType: VideoEventType.pictureInPictureStopped),
+      );
+      await tester.pumpAndSettle();
+      expect(controller.value.isPictureInPictureActive, isFalse);
+
+      await tester.runAsync(controller.dispose);
+    });
+  });
+
+  group('replaceDataSource', () {
+    test('is a no-op before initialize', () async {
+      final controller = VideoPlayerController.networkUrl(_localhostUri);
+      await controller.replaceDataSource(
+        DataSource(sourceType: DataSourceType.network, uri: 'https://x/y.mp4'),
+      );
+      expect(
+        fakeVideoPlayerPlatform.calls,
+        isNot(contains('replaceDataSource')),
+      );
+    });
+
+    testWidgets('updates data source, value, and completes when ready', (
+      WidgetTester tester,
+    ) async {
+      final controller = VideoPlayerController.networkUrl(
+        _localhostUri,
+        httpHeaders: <String, String>{'a': 'b'},
+      );
+      await controller.initialize();
+      await controller.play();
+      await controller.seekTo(const Duration(milliseconds: 500));
+      expect(controller.value.isPlaying, isTrue);
+      expect(controller.value.duration, const Duration(seconds: 1));
+
+      final newSource = DataSource(
+        sourceType: DataSourceType.network,
+        uri: 'https://example.com/next.m3u8',
+        formatHint: VideoFormat.hls,
+        httpHeaders: <String, String>{'c': 'd'},
+      );
+      await tester.runAsync(() => controller.replaceDataSource(newSource));
+
+      expect(fakeVideoPlayerPlatform.calls, contains('replaceDataSource'));
+      expect(fakeVideoPlayerPlatform.replacedDataSources, <DataSource>[
+        newSource,
+      ]);
+      expect(controller.dataSource, 'https://example.com/next.m3u8');
+      expect(controller.dataSourceType, DataSourceType.network);
+      expect(controller.formatHint, VideoFormat.hls);
+      expect(controller.httpHeaders, <String, String>{'c': 'd'});
+      expect(controller.value.duration, const Duration(seconds: 2));
+      expect(controller.value.size, const Size(200, 100));
+      expect(controller.value.position, Duration.zero);
+      expect(controller.value.buffered, isEmpty);
+      expect(controller.value.isPlaying, isTrue);
+      expect(controller.value.isInitialized, isTrue);
+      expect(controller.value.hasError, isFalse);
+
+      await tester.runAsync(controller.dispose);
+    });
+
+    testWidgets('updates asset fields', (WidgetTester tester) async {
+      final controller = VideoPlayerController.networkUrl(_localhostUri);
+      await controller.initialize();
+
+      await tester.runAsync(
+        () => controller.replaceDataSource(
+          DataSource(
+            sourceType: DataSourceType.asset,
+            asset: 'assets/next.mp4',
+            package: 'pkg',
+          ),
+        ),
+      );
+
+      expect(controller.dataSource, 'assets/next.mp4');
+      expect(controller.dataSourceType, DataSourceType.asset);
+      expect(controller.package, 'pkg');
+      expect(controller.httpHeaders, isEmpty);
+      expect(controller.formatHint, isNull);
+
+      await tester.runAsync(controller.dispose);
+    });
+
+    testWidgets('completes with error when the new media fails to load', (
+      WidgetTester tester,
+    ) async {
+      final controller = VideoPlayerController.networkUrl(_localhostUri);
+      await controller.initialize();
+      fakeVideoPlayerPlatform.forceReplaceError = true;
+
+      await tester.runAsync(() async {
+        await expectLater(
+          controller.replaceDataSource(
+            DataSource(
+              sourceType: DataSourceType.network,
+              uri: 'https://x/y.mp4',
+            ),
+          ),
+          throwsA(isA<PlatformException>()),
+        );
+      });
+      expect(controller.value.hasError, isTrue);
+      expect(controller.value.errorDescription, 'replace failed');
+
+      await tester.runAsync(controller.dispose);
+    });
+  });
+
   group('DurationRange', () {
     test('uses given values', () {
       const start = Duration(seconds: 2);
@@ -1244,7 +1476,8 @@ void main() {
         'volume: 0.5, '
         'playbackSpeed: 1.5, '
         'errorDescription: null, '
-        'isCompleted: false),',
+        'isCompleted: false, '
+        'isPictureInPictureActive: false),',
       );
     });
 
@@ -1276,6 +1509,18 @@ void main() {
         );
 
         expect(copy.errorDescription, 'new error');
+      });
+      test('isPictureInPictureActive defaults to false and is copied', () {
+        const original = VideoPlayerValue.uninitialized();
+        expect(original.isPictureInPictureActive, isFalse);
+
+        final VideoPlayerValue copy = original.copyWith(
+          isPictureInPictureActive: true,
+        );
+        expect(copy.isPictureInPictureActive, isTrue);
+        expect(copy.copyWith().isPictureInPictureActive, isTrue);
+        expect(copy, isNot(equals(original)));
+        expect(copy.toString(), contains('isPictureInPictureActive: true'));
       });
     });
 
@@ -1625,5 +1870,57 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
     }
     calls.add('setWebOptions');
     webOptions[playerId] = options;
+  }
+
+  bool pictureInPictureSupported = false;
+  bool startPictureInPictureResult = true;
+  final List<bool> pictureInPictureAutoEnterParams = <bool>[];
+  final List<DataSource> replacedDataSources = <DataSource>[];
+  bool forceReplaceError = false;
+
+  @override
+  Future<bool> isPictureInPictureSupported(int playerId) async {
+    calls.add('isPictureInPictureSupported');
+    return pictureInPictureSupported;
+  }
+
+  @override
+  Future<void> setPictureInPictureParams(
+    int playerId, {
+    required bool autoEnterEnabled,
+  }) async {
+    calls.add('setPictureInPictureParams');
+    pictureInPictureAutoEnterParams.add(autoEnterEnabled);
+  }
+
+  @override
+  Future<bool> startPictureInPicture(int playerId) async {
+    calls.add('startPictureInPicture');
+    return startPictureInPictureResult;
+  }
+
+  @override
+  Future<void> stopPictureInPicture(int playerId) async {
+    calls.add('stopPictureInPicture');
+  }
+
+  @override
+  Future<void> replaceDataSource(int playerId, DataSource dataSource) async {
+    calls.add('replaceDataSource');
+    replacedDataSources.add(dataSource);
+    final StreamController<VideoEvent> stream = streams[playerId]!;
+    if (forceReplaceError) {
+      stream.addError(
+        PlatformException(code: 'VideoError', message: 'replace failed'),
+      );
+    } else {
+      stream.add(
+        VideoEvent(
+          eventType: VideoEventType.dataSourceReplaced,
+          size: const Size(200, 100),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 }

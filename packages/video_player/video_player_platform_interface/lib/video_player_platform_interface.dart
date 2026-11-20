@@ -185,6 +185,62 @@ abstract class VideoPlayerPlatform extends PlatformInterface {
   bool isMediaControlsSupported() {
     return false;
   }
+
+  // ============================================================================
+  // Picture in Picture API
+  // ============================================================================
+
+  /// Returns whether Picture in Picture is supported for the given player.
+  ///
+  /// Support depends on the platform, the device, and how the player renders
+  /// its video (for example, on iOS only players created with
+  /// [VideoViewType.platformView] can enter Picture in Picture).
+  ///
+  /// The default implementation returns `false`.
+  Future<bool> isPictureInPictureSupported(int playerId) async {
+    return false;
+  }
+
+  /// Configures Picture in Picture behavior for the given player.
+  ///
+  /// When [autoEnterEnabled] is `true`, the platform may enter Picture in
+  /// Picture automatically when the app moves to the background while the
+  /// video is playing (iOS 14.2+: `canStartPictureInPictureAutomaticallyFromInline`).
+  ///
+  /// The default implementation does nothing.
+  Future<void> setPictureInPictureParams(
+    int playerId, {
+    required bool autoEnterEnabled,
+  }) async {}
+
+  /// Requests to start Picture in Picture for the given player.
+  ///
+  /// Returns `true` if the request was accepted by the platform. Actual state
+  /// changes are reported via [VideoEventType.pictureInPictureStarted] and
+  /// [VideoEventType.pictureInPictureStopped].
+  ///
+  /// The default implementation returns `false`.
+  Future<bool> startPictureInPicture(int playerId) async {
+    return false;
+  }
+
+  /// Requests to stop Picture in Picture for the given player.
+  ///
+  /// The default implementation does nothing.
+  Future<void> stopPictureInPicture(int playerId) async {}
+
+  /// Replaces the media of an existing player with [dataSource] without
+  /// recreating the underlying native player.
+  ///
+  /// This keeps native resources that are bound to the player instance (for
+  /// example the iOS `AVPlayer` used by a Picture in Picture window, or the
+  /// remote command center registration) alive across track changes.
+  ///
+  /// Once the new media is ready, [VideoEventType.dataSourceReplaced] is
+  /// emitted with the new duration and size.
+  Future<void> replaceDataSource(int playerId, DataSource dataSource) {
+    throw UnimplementedError('replaceDataSource() has not been implemented.');
+  }
 }
 
 class _PlaceholderImplementation extends VideoPlayerPlatform {}
@@ -313,13 +369,14 @@ class VideoEvent {
 
   /// Duration of the video.
   ///
-  /// Only used if [eventType] is [VideoEventType.initialized] or
-  /// [VideoEventType.positionUpdate].
+  /// Only used if [eventType] is [VideoEventType.initialized],
+  /// [VideoEventType.dataSourceReplaced] or [VideoEventType.positionUpdate].
   final Duration? duration;
 
   /// Size of the video.
   ///
-  /// Only used if [eventType] is [VideoEventType.initialized].
+  /// Only used if [eventType] is [VideoEventType.initialized] or
+  /// [VideoEventType.dataSourceReplaced].
   final Size? size;
 
   /// Degrees to rotate the video (clockwise) so it is displayed correctly.
@@ -415,6 +472,28 @@ enum VideoEventType {
   /// current playback position. This is particularly important for background
   /// playback on iOS, where Dart timers don't run reliably.
   positionUpdate,
+
+  /// Picture in Picture has started.
+  pictureInPictureStarted,
+
+  /// Picture in Picture has stopped.
+  ///
+  /// This is also fired when a start request fails, so that listeners can
+  /// reset their state.
+  pictureInPictureStopped,
+
+  /// The user asked to return to the app from the Picture in Picture window.
+  ///
+  /// The app should restore its full player UI. On iOS this corresponds to
+  /// `restoreUserInterfaceForPictureInPictureStopWithCompletionHandler:`.
+  pictureInPictureRestoreUserInterface,
+
+  /// The media was replaced via [VideoPlayerPlatform.replaceDataSource] and
+  /// the new media is ready to play.
+  ///
+  /// [VideoEvent.duration] and [VideoEvent.size] carry the values of the new
+  /// media.
+  dataSourceReplaced,
 
   /// An unknown event has been received.
   unknown,
@@ -761,14 +840,8 @@ class VideoMetadata {
   }
 
   @override
-  int get hashCode => Object.hash(
-    title,
-    artist,
-    album,
-    artworkUrl,
-    duration,
-    isLiveStream,
-  );
+  int get hashCode =>
+      Object.hash(title, artist, album, artworkUrl, duration, isLiveStream);
 
   @override
   String toString() =>

@@ -106,6 +106,19 @@
       }];
 }
 
+- (void)replacePlayerItem:(AVPlayerItem *)item {
+  [super replacePlayerItem:item];
+  // Ensure the first frame of the new item is drawn once available, even if paused.
+  [self expectFrame];
+}
+
+#if TARGET_OS_IOS
+- (BOOL)supportsPictureInPicture {
+  // The texture path has no on-screen AVPlayerLayer, so Picture in Picture is unavailable.
+  return NO;
+}
+#endif
+
 - (void)disposeWithError:(FlutterError *_Nullable *_Nonnull)error {
   [super disposeWithError:error];
 

@@ -15,6 +15,7 @@ import 'src/closed_caption_file.dart';
 
 export 'package:video_player_platform_interface/video_player_platform_interface.dart'
     show
+        DataSource,
         DataSourceType,
         DurationRange,
         VideoFormat,
@@ -61,6 +62,7 @@ class VideoPlayerValue {
     this.rotationCorrection = 0,
     this.errorDescription,
     this.isCompleted = false,
+    this.isPictureInPictureActive = false,
   });
 
   /// Returns an instance for a video that hasn't been loaded.
@@ -127,6 +129,12 @@ class VideoPlayerValue {
   /// Does not update if video is looping.
   final bool isCompleted;
 
+  /// True while the video is displayed in a Picture in Picture window.
+  ///
+  /// Only updated on platforms that support Picture in Picture (see
+  /// [VideoPlayerController.isPictureInPictureSupported]).
+  final bool isPictureInPictureActive;
+
   /// The [size] of the currently loaded video.
   final Size size;
 
@@ -175,6 +183,7 @@ class VideoPlayerValue {
     int? rotationCorrection,
     String? errorDescription = _defaultErrorDescription,
     bool? isCompleted,
+    bool? isPictureInPictureActive,
   }) {
     return VideoPlayerValue(
       duration: duration ?? this.duration,
@@ -194,6 +203,8 @@ class VideoPlayerValue {
           ? errorDescription
           : this.errorDescription,
       isCompleted: isCompleted ?? this.isCompleted,
+      isPictureInPictureActive:
+          isPictureInPictureActive ?? this.isPictureInPictureActive,
     );
   }
 
@@ -213,7 +224,8 @@ class VideoPlayerValue {
         'volume: $volume, '
         'playbackSpeed: $playbackSpeed, '
         'errorDescription: $errorDescription, '
-        'isCompleted: $isCompleted),';
+        'isCompleted: $isCompleted, '
+        'isPictureInPictureActive: $isPictureInPictureActive),';
   }
 
   @override
@@ -235,7 +247,8 @@ class VideoPlayerValue {
           size == other.size &&
           rotationCorrection == other.rotationCorrection &&
           isInitialized == other.isInitialized &&
-          isCompleted == other.isCompleted;
+          isCompleted == other.isCompleted &&
+          isPictureInPictureActive == other.isPictureInPictureActive;
 
   @override
   int get hashCode => Object.hash(
@@ -254,6 +267,7 @@ class VideoPlayerValue {
     rotationCorrection,
     isInitialized,
     isCompleted,
+    isPictureInPictureActive,
   );
 }
 
@@ -278,15 +292,17 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   /// for the video. Platforms that do not support the request view type will
   /// ignore this parameter.
   VideoPlayerController.asset(
-    this.dataSource, {
-    this.package,
+    String dataSource, {
+    String? package,
     Future<ClosedCaptionFile>? closedCaptionFile,
     this.videoPlayerOptions,
     this.viewType = VideoViewType.textureView,
   }) : _closedCaptionFileFuture = closedCaptionFile,
-       dataSourceType = DataSourceType.asset,
-       formatHint = null,
-       httpHeaders = const <String, String>{},
+       _dataSource = dataSource,
+       _dataSourceType = DataSourceType.asset,
+       _package = package,
+       _formatHint = null,
+       _httpHeaders = const <String, String>{},
        super(const VideoPlayerValue(duration: Duration.zero));
 
   /// Constructs a [VideoPlayerController] playing a network video.
@@ -304,15 +320,18 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   /// for the request to the [dataSource].
   @Deprecated('Use VideoPlayerController.networkUrl instead')
   VideoPlayerController.network(
-    this.dataSource, {
-    this.formatHint,
+    String dataSource, {
+    VideoFormat? formatHint,
     Future<ClosedCaptionFile>? closedCaptionFile,
     this.videoPlayerOptions,
-    this.httpHeaders = const <String, String>{},
+    Map<String, String> httpHeaders = const <String, String>{},
     this.viewType = VideoViewType.textureView,
   }) : _closedCaptionFileFuture = closedCaptionFile,
-       dataSourceType = DataSourceType.network,
-       package = null,
+       _dataSource = dataSource,
+       _dataSourceType = DataSourceType.network,
+       _formatHint = formatHint,
+       _httpHeaders = httpHeaders,
+       _package = null,
        super(const VideoPlayerValue(duration: Duration.zero));
 
   /// Constructs a [VideoPlayerController] playing a network video.
@@ -326,15 +345,17 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   /// for the request to the [dataSource].
   VideoPlayerController.networkUrl(
     Uri url, {
-    this.formatHint,
+    VideoFormat? formatHint,
     Future<ClosedCaptionFile>? closedCaptionFile,
     this.videoPlayerOptions,
-    this.httpHeaders = const <String, String>{},
+    Map<String, String> httpHeaders = const <String, String>{},
     this.viewType = VideoViewType.textureView,
   }) : _closedCaptionFileFuture = closedCaptionFile,
-       dataSource = url.toString(),
-       dataSourceType = DataSourceType.network,
-       package = null,
+       _dataSource = url.toString(),
+       _dataSourceType = DataSourceType.network,
+       _formatHint = formatHint,
+       _httpHeaders = httpHeaders,
+       _package = null,
        super(const VideoPlayerValue(duration: Duration.zero));
 
   /// Constructs a [VideoPlayerController] playing a video from a file.
@@ -345,13 +366,14 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
     File file, {
     Future<ClosedCaptionFile>? closedCaptionFile,
     this.videoPlayerOptions,
-    this.httpHeaders = const <String, String>{},
+    Map<String, String> httpHeaders = const <String, String>{},
     this.viewType = VideoViewType.textureView,
   }) : _closedCaptionFileFuture = closedCaptionFile,
-       dataSource = Uri.file(file.absolute.path).toString(),
-       dataSourceType = DataSourceType.file,
-       package = null,
-       formatHint = null,
+       _dataSource = Uri.file(file.absolute.path).toString(),
+       _dataSourceType = DataSourceType.file,
+       _httpHeaders = httpHeaders,
+       _package = null,
+       _formatHint = null,
        super(const VideoPlayerValue(duration: Duration.zero));
 
   /// Constructs a [VideoPlayerController] playing a video from a contentUri.
@@ -368,35 +390,50 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
          'VideoPlayerController.contentUri is only supported on Android.',
        ),
        _closedCaptionFileFuture = closedCaptionFile,
-       dataSource = contentUri.toString(),
-       dataSourceType = DataSourceType.contentUri,
-       package = null,
-       formatHint = null,
-       httpHeaders = const <String, String>{},
+       _dataSource = contentUri.toString(),
+       _dataSourceType = DataSourceType.contentUri,
+       _package = null,
+       _formatHint = null,
+       _httpHeaders = const <String, String>{},
        super(const VideoPlayerValue(duration: Duration.zero));
 
   /// The URI to the video file. This will be in different formats depending on
   /// the [DataSourceType] of the original video.
-  final String dataSource;
+  ///
+  /// Updated by [replaceDataSource].
+  String get dataSource => _dataSource;
+  String _dataSource;
 
   /// HTTP headers used for the request to the [dataSource].
   /// Only for [VideoPlayerController.network].
   /// Always empty for other video types.
-  final Map<String, String> httpHeaders;
+  ///
+  /// Updated by [replaceDataSource].
+  Map<String, String> get httpHeaders => _httpHeaders;
+  Map<String, String> _httpHeaders;
 
   /// **Android only**. Will override the platform's generic file format
   /// detection with whatever is set here.
-  final VideoFormat? formatHint;
+  ///
+  /// Updated by [replaceDataSource].
+  VideoFormat? get formatHint => _formatHint;
+  VideoFormat? _formatHint;
 
   /// Describes the type of data source this [VideoPlayerController]
-  /// is constructed with.
-  final DataSourceType dataSourceType;
+  /// is currently playing.
+  ///
+  /// Updated by [replaceDataSource].
+  DataSourceType get dataSourceType => _dataSourceType;
+  DataSourceType _dataSourceType;
 
   /// Provide additional configuration options (optional). Like setting the audio mode to mix
   final VideoPlayerOptions? videoPlayerOptions;
 
   /// Only set for [asset] videos. The package that the asset was loaded from.
-  final String? package;
+  ///
+  /// Updated by [replaceDataSource].
+  String? get package => _package;
+  String? _package;
 
   /// The requested display mode for the video.
   ///
@@ -414,6 +451,12 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   // Remote control callbacks
   VoidCallback? _onNextTrackRequested;
   VoidCallback? _onPreviousTrackRequested;
+
+  // Picture in Picture callbacks
+  VoidCallback? _onPictureInPictureRestoreUserInterface;
+
+  // Completes when a pending replaceDataSource() has loaded its new media.
+  Completer<void>? _replaceDataSourceCompleter;
 
   /// The id of a player that hasn't been initialized.
   @visibleForTesting
@@ -556,6 +599,26 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
           if (event.isPlaying != null && event.isPlaying != value.isPlaying) {
             value = value.copyWith(isPlaying: event.isPlaying);
           }
+        case VideoEventType.pictureInPictureStarted:
+          value = value.copyWith(isPictureInPictureActive: true);
+        case VideoEventType.pictureInPictureStopped:
+          value = value.copyWith(isPictureInPictureActive: false);
+        case VideoEventType.pictureInPictureRestoreUserInterface:
+          _onPictureInPictureRestoreUserInterface?.call();
+        case VideoEventType.dataSourceReplaced:
+          value = value.copyWith(
+            duration: event.duration,
+            size: event.size,
+            rotationCorrection: event.rotationCorrection,
+            position: Duration.zero,
+            buffered: <DurationRange>[],
+            caption: Caption.none,
+            isCompleted: false,
+            errorDescription: null,
+          );
+          final Completer<void>? completer = _replaceDataSourceCompleter;
+          _replaceDataSourceCompleter = null;
+          completer?.complete();
         case VideoEventType.unknown:
           break;
       }
@@ -572,6 +635,9 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
       if (!initializingCompleter.isCompleted) {
         initializingCompleter.completeError(obj);
       }
+      final Completer<void>? replaceCompleter = _replaceDataSourceCompleter;
+      _replaceDataSourceCompleter = null;
+      replaceCompleter?.completeError(obj);
     }
 
     _eventSubscription = _videoPlayerPlatform
@@ -894,6 +960,110 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   /// (iOS and Android).
   set onPreviousTrackRequested(VoidCallback? callback) {
     _onPreviousTrackRequested = callback;
+  }
+
+  // ============================================================================
+  // Picture in Picture
+  // ============================================================================
+
+  /// Returns whether Picture in Picture is supported for this player.
+  ///
+  /// On iOS this requires [VideoViewType.platformView]; players using a
+  /// texture cannot enter Picture in Picture. Returns `false` before
+  /// [initialize] completes, after [dispose], and on platforms without support.
+  Future<bool> isPictureInPictureSupported() async {
+    if (_isDisposedOrNotInitialized) {
+      return false;
+    }
+    return _videoPlayerPlatform.isPictureInPictureSupported(_playerId);
+  }
+
+  /// Configures Picture in Picture behavior.
+  ///
+  /// When [autoEnterEnabled] is `true`, Picture in Picture starts automatically
+  /// when the app moves to the background while the video is playing and its
+  /// view is visible (iOS 14.2+). On other platforms, or when Picture in
+  /// Picture is not supported, this does nothing.
+  Future<void> setPictureInPictureParams({
+    required bool autoEnterEnabled,
+  }) async {
+    if (_isDisposedOrNotInitialized) {
+      return;
+    }
+    await _videoPlayerPlatform.setPictureInPictureParams(
+      _playerId,
+      autoEnterEnabled: autoEnterEnabled,
+    );
+  }
+
+  /// Requests to start Picture in Picture.
+  ///
+  /// Returns `true` if the platform accepted the request. Watch
+  /// [VideoPlayerValue.isPictureInPictureActive] for the actual state.
+  Future<bool> startPictureInPicture() async {
+    if (_isDisposedOrNotInitialized) {
+      return false;
+    }
+    return _videoPlayerPlatform.startPictureInPicture(_playerId);
+  }
+
+  /// Requests to stop Picture in Picture.
+  Future<void> stopPictureInPicture() async {
+    if (_isDisposedOrNotInitialized) {
+      return;
+    }
+    await _videoPlayerPlatform.stopPictureInPicture(_playerId);
+  }
+
+  /// Sets a callback to be invoked when the user asks to return to the app
+  /// from the Picture in Picture window (iOS: "restore user interface").
+  ///
+  /// The app should bring its full player UI back when this is called.
+  set onPictureInPictureRestoreUserInterface(VoidCallback? callback) {
+    _onPictureInPictureRestoreUserInterface = callback;
+  }
+
+  /// Replaces the media of this controller with [dataSource] without
+  /// recreating the native player.
+  ///
+  /// Unlike disposing this controller and creating a new one, this keeps
+  /// native resources that are bound to the player instance alive, such as
+  /// the Picture in Picture window and the remote command center registration
+  /// on iOS. Playback state ([VideoPlayerValue.isPlaying], looping, volume,
+  /// playback speed) is preserved; position is reset to zero.
+  ///
+  /// The returned future completes once the new media is ready to play, and
+  /// completes with an error if it fails to load. [dataSource],
+  /// [dataSourceType], [httpHeaders], [formatHint] and [package] are updated
+  /// to describe the new media.
+  ///
+  /// Closed captions are not updated; call [setClosedCaptionFile] separately.
+  Future<void> replaceDataSource(DataSource newDataSource) async {
+    if (_isDisposedOrNotInitialized) {
+      return;
+    }
+    final Completer<void>? previous = _replaceDataSourceCompleter;
+    if (previous != null && !previous.isCompleted) {
+      // A newer request supersedes the pending one; resolve it so callers
+      // awaiting it do not hang.
+      previous.complete();
+    }
+    final completer = Completer<void>();
+    _replaceDataSourceCompleter = completer;
+    try {
+      await _videoPlayerPlatform.replaceDataSource(_playerId, newDataSource);
+    } catch (e) {
+      if (identical(_replaceDataSourceCompleter, completer)) {
+        _replaceDataSourceCompleter = null;
+      }
+      rethrow;
+    }
+    _dataSource = newDataSource.uri ?? newDataSource.asset ?? _dataSource;
+    _dataSourceType = newDataSource.sourceType;
+    _httpHeaders = newDataSource.httpHeaders;
+    _formatHint = newDataSource.formatHint;
+    _package = newDataSource.package;
+    return completer.future;
   }
 }
 

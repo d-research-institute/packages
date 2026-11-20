@@ -114,6 +114,62 @@ class CreationOptions {
   int get hashCode => Object.hashAll(_toList());
 }
 
+/// Metadata for Now Playing Info (lock screen / control center).
+class NowPlayingMetadata {
+  NowPlayingMetadata({
+    this.title,
+    this.artist,
+    this.album,
+    this.artworkUrl,
+    this.isLiveStream = false,
+  });
+
+  String? title;
+
+  String? artist;
+
+  String? album;
+
+  String? artworkUrl;
+
+  bool isLiveStream;
+
+  List<Object?> _toList() {
+    return <Object?>[title, artist, album, artworkUrl, isLiveStream];
+  }
+
+  Object encode() {
+    return _toList();
+  }
+
+  static NowPlayingMetadata decode(Object result) {
+    result as List<Object?>;
+    return NowPlayingMetadata(
+      title: result[0] as String?,
+      artist: result[1] as String?,
+      album: result[2] as String?,
+      artworkUrl: result[3] as String?,
+      isLiveStream: result[4]! as bool,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! NowPlayingMetadata || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(encode(), other.encode());
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => Object.hashAll(_toList());
+}
+
 class TexturePlayerIds {
   TexturePlayerIds({required this.playerId, required this.textureId});
 
@@ -154,58 +210,6 @@ class TexturePlayerIds {
   int get hashCode => Object.hashAll(_toList());
 }
 
-/// Metadata for Now Playing Info (lock screen / control center).
-class NowPlayingMetadata {
-  NowPlayingMetadata({
-    this.title,
-    this.artist,
-    this.album,
-    this.artworkUrl,
-    this.isLiveStream = false,
-  });
-
-  String? title;
-  String? artist;
-  String? album;
-  String? artworkUrl;
-  bool isLiveStream;
-
-  List<Object?> _toList() {
-    return <Object?>[title, artist, album, artworkUrl, isLiveStream];
-  }
-
-  Object encode() {
-    return _toList();
-  }
-
-  static NowPlayingMetadata decode(Object result) {
-    result as List<Object?>;
-    return NowPlayingMetadata(
-      title: result[0] as String?,
-      artist: result[1] as String?,
-      album: result[2] as String?,
-      artworkUrl: result[3] as String?,
-      isLiveStream: result[4]! as bool,
-    );
-  }
-
-  @override
-  // ignore: avoid_equals_and_hash_code_on_mutable_classes
-  bool operator ==(Object other) {
-    if (other is! NowPlayingMetadata || other.runtimeType != runtimeType) {
-      return false;
-    }
-    if (identical(this, other)) {
-      return true;
-    }
-    return _deepEquals(encode(), other.encode());
-  }
-
-  @override
-  // ignore: avoid_equals_and_hash_code_on_mutable_classes
-  int get hashCode => Object.hashAll(_toList());
-}
-
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
   @override
@@ -219,10 +223,10 @@ class _PigeonCodec extends StandardMessageCodec {
     } else if (value is CreationOptions) {
       buffer.putUint8(130);
       writeValue(buffer, value.encode());
-    } else if (value is TexturePlayerIds) {
+    } else if (value is NowPlayingMetadata) {
       buffer.putUint8(131);
       writeValue(buffer, value.encode());
-    } else if (value is NowPlayingMetadata) {
+    } else if (value is TexturePlayerIds) {
       buffer.putUint8(132);
       writeValue(buffer, value.encode());
     } else {
@@ -238,9 +242,9 @@ class _PigeonCodec extends StandardMessageCodec {
       case 130:
         return CreationOptions.decode(readValue(buffer)!);
       case 131:
-        return TexturePlayerIds.decode(readValue(buffer)!);
-      case 132:
         return NowPlayingMetadata.decode(readValue(buffer)!);
+      case 132:
+        return TexturePlayerIds.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
     }
@@ -681,6 +685,154 @@ class VideoPlayerInstanceApi {
           binaryMessenger: pigeonVar_binaryMessenger,
         );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final List<Object?>? pigeonVar_replyList =
+        await pigeonVar_sendFuture as List<Object?>?;
+    if (pigeonVar_replyList == null) {
+      throw _createConnectionError(pigeonVar_channelName);
+    } else if (pigeonVar_replyList.length > 1) {
+      throw PlatformException(
+        code: pigeonVar_replyList[0]! as String,
+        message: pigeonVar_replyList[1] as String?,
+        details: pigeonVar_replyList[2],
+      );
+    } else {
+      return;
+    }
+  }
+
+  /// Returns whether Picture in Picture is supported for this player.
+  /// Only players rendered with a platform view support it (iOS only).
+  Future<bool> isPictureInPictureSupported() async {
+    final String pigeonVar_channelName =
+        'dev.flutter.pigeon.video_player_avfoundation.VideoPlayerInstanceApi.isPictureInPictureSupported$pigeonVar_messageChannelSuffix';
+    final BasicMessageChannel<Object?> pigeonVar_channel =
+        BasicMessageChannel<Object?>(
+          pigeonVar_channelName,
+          pigeonChannelCodec,
+          binaryMessenger: pigeonVar_binaryMessenger,
+        );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final List<Object?>? pigeonVar_replyList =
+        await pigeonVar_sendFuture as List<Object?>?;
+    if (pigeonVar_replyList == null) {
+      throw _createConnectionError(pigeonVar_channelName);
+    } else if (pigeonVar_replyList.length > 1) {
+      throw PlatformException(
+        code: pigeonVar_replyList[0]! as String,
+        message: pigeonVar_replyList[1] as String?,
+        details: pigeonVar_replyList[2],
+      );
+    } else if (pigeonVar_replyList[0] == null) {
+      throw PlatformException(
+        code: 'null-error',
+        message: 'Host platform returned null value for non-null return value.',
+      );
+    } else {
+      return (pigeonVar_replyList[0] as bool?)!;
+    }
+  }
+
+  /// Sets whether Picture in Picture should start automatically when the app
+  /// moves to the background (iOS 14.2+).
+  Future<void> setPictureInPictureParams(bool autoEnterEnabled) async {
+    final String pigeonVar_channelName =
+        'dev.flutter.pigeon.video_player_avfoundation.VideoPlayerInstanceApi.setPictureInPictureParams$pigeonVar_messageChannelSuffix';
+    final BasicMessageChannel<Object?> pigeonVar_channel =
+        BasicMessageChannel<Object?>(
+          pigeonVar_channelName,
+          pigeonChannelCodec,
+          binaryMessenger: pigeonVar_binaryMessenger,
+        );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
+      <Object?>[autoEnterEnabled],
+    );
+    final List<Object?>? pigeonVar_replyList =
+        await pigeonVar_sendFuture as List<Object?>?;
+    if (pigeonVar_replyList == null) {
+      throw _createConnectionError(pigeonVar_channelName);
+    } else if (pigeonVar_replyList.length > 1) {
+      throw PlatformException(
+        code: pigeonVar_replyList[0]! as String,
+        message: pigeonVar_replyList[1] as String?,
+        details: pigeonVar_replyList[2],
+      );
+    } else {
+      return;
+    }
+  }
+
+  /// Requests to start Picture in Picture. Returns whether the request was
+  /// accepted.
+  Future<bool> startPictureInPicture() async {
+    final String pigeonVar_channelName =
+        'dev.flutter.pigeon.video_player_avfoundation.VideoPlayerInstanceApi.startPictureInPicture$pigeonVar_messageChannelSuffix';
+    final BasicMessageChannel<Object?> pigeonVar_channel =
+        BasicMessageChannel<Object?>(
+          pigeonVar_channelName,
+          pigeonChannelCodec,
+          binaryMessenger: pigeonVar_binaryMessenger,
+        );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final List<Object?>? pigeonVar_replyList =
+        await pigeonVar_sendFuture as List<Object?>?;
+    if (pigeonVar_replyList == null) {
+      throw _createConnectionError(pigeonVar_channelName);
+    } else if (pigeonVar_replyList.length > 1) {
+      throw PlatformException(
+        code: pigeonVar_replyList[0]! as String,
+        message: pigeonVar_replyList[1] as String?,
+        details: pigeonVar_replyList[2],
+      );
+    } else if (pigeonVar_replyList[0] == null) {
+      throw PlatformException(
+        code: 'null-error',
+        message: 'Host platform returned null value for non-null return value.',
+      );
+    } else {
+      return (pigeonVar_replyList[0] as bool?)!;
+    }
+  }
+
+  /// Requests to stop Picture in Picture.
+  Future<void> stopPictureInPicture() async {
+    final String pigeonVar_channelName =
+        'dev.flutter.pigeon.video_player_avfoundation.VideoPlayerInstanceApi.stopPictureInPicture$pigeonVar_messageChannelSuffix';
+    final BasicMessageChannel<Object?> pigeonVar_channel =
+        BasicMessageChannel<Object?>(
+          pigeonVar_channelName,
+          pigeonChannelCodec,
+          binaryMessenger: pigeonVar_binaryMessenger,
+        );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final List<Object?>? pigeonVar_replyList =
+        await pigeonVar_sendFuture as List<Object?>?;
+    if (pigeonVar_replyList == null) {
+      throw _createConnectionError(pigeonVar_channelName);
+    } else if (pigeonVar_replyList.length > 1) {
+      throw PlatformException(
+        code: pigeonVar_replyList[0]! as String,
+        message: pigeonVar_replyList[1] as String?,
+        details: pigeonVar_replyList[2],
+      );
+    } else {
+      return;
+    }
+  }
+
+  /// Replaces the current media without recreating the AVPlayer, so that a
+  /// Picture in Picture window and the remote command center stay attached.
+  Future<void> replaceDataSource(CreationOptions options) async {
+    final String pigeonVar_channelName =
+        'dev.flutter.pigeon.video_player_avfoundation.VideoPlayerInstanceApi.replaceDataSource$pigeonVar_messageChannelSuffix';
+    final BasicMessageChannel<Object?> pigeonVar_channel =
+        BasicMessageChannel<Object?>(
+          pigeonVar_channelName,
+          pigeonChannelCodec,
+          binaryMessenger: pigeonVar_binaryMessenger,
+        );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
+      <Object?>[options],
+    );
     final List<Object?>? pigeonVar_replyList =
         await pigeonVar_sendFuture as List<Object?>?;
     if (pigeonVar_replyList == null) {

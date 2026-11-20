@@ -42,7 +42,24 @@ NS_ASSUME_NONNULL_BEGIN
                          avFactory:(id<FVPAVFactory>)avFactory
                       viewProvider:(NSObject<FVPViewProvider> *)viewProvider;
 
+/// Returns the AVPlayerItem corresponding to the given creation options.
++ (AVPlayerItem *)playerItemWithCreationOptions:(FVPCreationOptions *)options;
+
 #if TARGET_OS_IOS
+/// The AVPlayerLayer that currently displays this player's video. It is used to drive Picture in
+/// Picture, and is set by FVPNativeVideoView when the platform view is created.
+@property(nonatomic, weak, nullable) AVPlayerLayer *pictureInPictureLayer;
+/// Whether Picture in Picture is currently active for this player.
+@property(nonatomic, readonly) BOOL isPictureInPictureActive;
+/// Whether a Picture in Picture start is in progress (requested or animating in).
+@property(nonatomic, readonly) BOOL isPictureInPictureStarting;
+/// Whether the player must stay attached to its AVPlayerLayer when the app enters the background.
+///
+/// This is YES while Picture in Picture is active or starting, and while automatic Picture in
+/// Picture is enabled, since detaching the layer would prevent the system from presenting the
+/// Picture in Picture window.
+@property(nonatomic, readonly) BOOL keepsPlayerLayerAttachedInBackground;
+
 /// Sets metadata for the Now Playing Info Center (lock screen / control center).
 /// This enables remote control via Bluetooth/headset buttons.
 - (void)setNowPlayingMetadataWithTitle:(nullable NSString *)title

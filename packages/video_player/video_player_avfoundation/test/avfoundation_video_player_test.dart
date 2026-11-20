@@ -690,5 +690,181 @@ void main() {
         ]),
       );
     });
+
+    test('videoEventsFor maps Picture in Picture and replace events', () async {
+      const playerId = 1;
+      final (AVFoundationVideoPlayer player, _, _) = setUpMockPlayer(
+        playerId: playerId,
+      );
+      const mockChannel = 'flutter.dev/videoPlayer/videoEvents$playerId';
+      const nativeEvents = <Map<String, dynamic>>[
+        <String, dynamic>{'event': 'pictureInPictureStarted'},
+        <String, dynamic>{'event': 'pictureInPictureRestoreUserInterface'},
+        <String, dynamic>{'event': 'pictureInPictureStopped'},
+        <String, dynamic>{
+          'event': 'dataSourceReplaced',
+          'duration': 4321,
+          'width': 640,
+          'height': 360,
+        },
+      ];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMessageHandler(mockChannel, (ByteData? message) async {
+            final MethodCall methodCall = const StandardMethodCodec()
+                .decodeMethodCall(message);
+            if (methodCall.method == 'listen') {
+              for (final event in nativeEvents) {
+                await TestDefaultBinaryMessengerBinding
+                    .instance
+                    .defaultBinaryMessenger
+                    .handlePlatformMessage(
+                      mockChannel,
+                      const StandardMethodCodec().encodeSuccessEnvelope(event),
+                      (ByteData? data) {},
+                    );
+              }
+              return const StandardMethodCodec().encodeSuccessEnvelope(null);
+            } else if (methodCall.method == 'cancel') {
+              return const StandardMethodCodec().encodeSuccessEnvelope(null);
+            } else {
+              fail('Expected listen or cancel');
+            }
+          });
+      expect(
+        player.videoEventsFor(playerId),
+        emitsInOrder(<dynamic>[
+          VideoEvent(eventType: VideoEventType.pictureInPictureStarted),
+          VideoEvent(
+            eventType: VideoEventType.pictureInPictureRestoreUserInterface,
+          ),
+          VideoEvent(eventType: VideoEventType.pictureInPictureStopped),
+          VideoEvent(
+            eventType: VideoEventType.dataSourceReplaced,
+            duration: const Duration(milliseconds: 4321),
+            size: const Size(640, 360),
+          ),
+        ]),
+      );
+    });
+
+    test('isPictureInPictureSupported', () async {
+      final (
+        AVFoundationVideoPlayer player,
+        _,
+        MockVideoPlayerInstanceApi playerApi,
+      ) = setUpMockPlayer(
+        playerId: 1,
+      );
+      when(
+        playerApi.isPictureInPictureSupported(),
+      ).thenAnswer((_) async => true);
+
+      expect(await player.isPictureInPictureSupported(1), isTrue);
+      verify(playerApi.isPictureInPictureSupported());
+    });
+
+    test('setPictureInPictureParams', () async {
+      final (
+        AVFoundationVideoPlayer player,
+        _,
+        MockVideoPlayerInstanceApi playerApi,
+      ) = setUpMockPlayer(
+        playerId: 1,
+      );
+      await player.setPictureInPictureParams(1, autoEnterEnabled: true);
+      verify(playerApi.setPictureInPictureParams(true));
+
+      await player.setPictureInPictureParams(1, autoEnterEnabled: false);
+      verify(playerApi.setPictureInPictureParams(false));
+    });
+
+    test('startPictureInPicture and stopPictureInPicture', () async {
+      final (
+        AVFoundationVideoPlayer player,
+        _,
+        MockVideoPlayerInstanceApi playerApi,
+      ) = setUpMockPlayer(
+        playerId: 1,
+      );
+      when(playerApi.startPictureInPicture()).thenAnswer((_) async => true);
+
+      expect(await player.startPictureInPicture(1), isTrue);
+      verify(playerApi.startPictureInPicture());
+
+      await player.stopPictureInPicture(1);
+      verify(playerApi.stopPictureInPicture());
+    });
+
+    test('replaceDataSource with network source', () async {
+      final (
+        AVFoundationVideoPlayer player,
+        _,
+        MockVideoPlayerInstanceApi playerApi,
+      ) = setUpMockPlayer(
+        playerId: 1,
+      );
+      await player.replaceDataSource(
+        1,
+        DataSource(
+          sourceType: DataSourceType.network,
+          uri: 'https://example.com/next.m3u8',
+          httpHeaders: <String, String>{'Authorization': 'Bearer x'},
+        ),
+      );
+
+      final VerificationResult verification = verify(
+        playerApi.replaceDataSource(captureAny),
+      );
+      final options = verification.captured[0] as CreationOptions;
+      expect(options.uri, 'https://example.com/next.m3u8');
+      expect(options.httpHeaders, <String, String>{
+        'Authorization': 'Bearer x',
+      });
+    });
+
+    test(
+      'replaceDataSource with asset source resolves the asset URL',
+      () async {
+        final (
+          AVFoundationVideoPlayer player,
+          MockAVFoundationVideoPlayerApi api,
+          MockVideoPlayerInstanceApi playerApi,
+        ) = setUpMockPlayer(
+          playerId: 1,
+        );
+        const assetUrl = 'file:///some/asset.mp4';
+        when(api.getAssetUrl(any, any)).thenAnswer((_) async => assetUrl);
+
+        await player.replaceDataSource(
+          1,
+          DataSource(
+            sourceType: DataSourceType.asset,
+            asset: 'assets/next.mp4',
+            package: 'pkg',
+          ),
+        );
+
+        verify(api.getAssetUrl('assets/next.mp4', 'pkg'));
+        final VerificationResult verification = verify(
+          playerApi.replaceDataSource(captureAny),
+        );
+        final options = verification.captured[0] as CreationOptions;
+        expect(options.uri, assetUrl);
+        expect(options.httpHeaders, isEmpty);
+      },
+    );
+
+    test('replaceDataSource throws for an unknown player', () async {
+      final (AVFoundationVideoPlayer player, _, _) = setUpMockPlayer(
+        playerId: 1,
+      );
+      await expectLater(
+        () => player.replaceDataSource(
+          99,
+          DataSource(sourceType: DataSourceType.network, uri: 'https://a/b'),
+        ),
+        throwsStateError,
+      );
+    });
   });
 }

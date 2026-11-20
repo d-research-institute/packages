@@ -42,11 +42,10 @@
 
   // Create a player provider block that can fetch the latest player
   __weak typeof(self) weakSelf = self;
-  FVPPlayerProvider playerProvider = ^AVPlayer *(NSNumber *playerId) {
+  FVPVideoPlayerProvider playerProvider = ^FVPVideoPlayer *(NSNumber *playerId) {
     __strong typeof(weakSelf) strongSelf = weakSelf;
     if (!strongSelf) return nil;
-    FVPVideoPlayer *player = strongSelf.playerByIdProvider(playerId);
-    return player.player;
+    return strongSelf.playerByIdProvider(playerId);
   };
 
   return [[FVPNativeVideoView alloc] initWithPlayerIdentifier:playerIdentifier
